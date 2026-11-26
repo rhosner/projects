@@ -43,6 +43,12 @@ test('bots fill seats and play their own turns', async () => {
   assert.equal(r.status, 200);
   assert.equal(r.data.status, 'playing');
   assert.deepEqual(r.data.players.map((p) => p.bot), [false, true, true]);
+
+  const solo = await call('/api/games', { method: 'POST', body: { name: 'Kit', numPlayers: 4, teams: false } });
+  const soloView = await call(`/api/games/${solo.data.id}/bots`, { method: 'POST', token: solo.data.token });
+  assert.equal(soloView.data.teams, false);
+  assert.equal(soloView.data.scores.length, 4, 'four separate scores');
+  assert.deepEqual(soloView.data.players.map((p) => p.side), [0, 1, 2, 3]);
   // Bots discard by themselves; afterwards only the human is still holding 5 cards.
   let v;
   for (let i = 0; i < 50; i++) {

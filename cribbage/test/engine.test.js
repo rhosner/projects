@@ -60,9 +60,9 @@ function seeded(seed) {
   };
 }
 
-function simulate(numPlayers, seed) {
+function simulate(numPlayers, seed, teams = true) {
   const rng = seeded(seed);
-  const g = createGame({ id: 'g', numPlayers });
+  const g = createGame({ id: 'g', numPlayers, teams });
   for (let i = 0; i < numPlayers; i++) addPlayer(g, { id: `p${i}`, name: `P${i}`, tokenHash: 'x' }, rng);
   let steps = 0;
   let maxHands = 0;
@@ -153,4 +153,19 @@ test('automatic steps happen one at a time and end in a counted, then dealt, han
     assert.equal(g.lastHand.handNo, 1);
   }
   assert.ok(kinds.every((k) => ['forced', 'go', 'go-point', 'last-card', 'end-pegging', 'deal'].includes(k)), kinds.join());
+});
+
+test('4-player free-for-all: four separate scores, everyone plays alone', () => {
+  const g = createGame({ id: 'g', numPlayers: 4, teams: false });
+  assert.equal(g.scores.length, 4);
+  for (let seed = 1; seed <= 20; seed++) simulate(4, seed * 101, false);
+  // Teams are only possible with 4 players.
+  assert.equal(createGame({ id: 'g', numPlayers: 3, teams: true }).teams, false);
+  assert.equal(createGame({ id: 'g', numPlayers: 4 }).teams, true, 'teams by default');
+});
+
+test('games saved before the teams option still play as teams', () => {
+  const g = createGame({ id: 'g', numPlayers: 4 });
+  delete g.teams;
+  assert.equal(viewFor(g, null).teams, true);
 });

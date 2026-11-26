@@ -22,6 +22,8 @@ for (const [to, from] of Object.entries(copies)) copyFileSync(join(root, from), 
 
 const css = readFileSync(join(root, 'public/styles.css'), 'utf8');
 writeFileSync(join(out, 'index.html'), `<title>Cribbage Table</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta charset="utf-8">
 <meta name="theme-color" content="#07110d">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

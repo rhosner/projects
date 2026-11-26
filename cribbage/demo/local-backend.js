@@ -1,6 +1,6 @@
 // In-browser stand-in for the server, used by the demo build. Same engine and
 // bot as the real server; games live in this browser's localStorage.
-import { createGame, addPlayer, startGame, discard, play, viewFor, RuleError } from './engine.js';
+import { createGame, addPlayer, startGame, discard, play, viewFor, hasTeams, RuleError } from './engine.js';
 import { nextAutomatic, BOT_NAMES } from './bot.js';
 
 const KEY = 'cribbage.demo.games';
@@ -65,7 +65,7 @@ function handle(path, method, body, token) {
   if (method === 'POST' && path === '/games') {
     const name = String(body?.name ?? '').trim().slice(0, 20);
     if (!name) fail(400, 'Enter a name');
-    const g = createGame({ id: newId(), numPlayers: Number(body.numPlayers) });
+    const g = createGame({ id: newId(), numPlayers: Number(body.numPlayers), teams: body.teams !== false });
     const t = crypto.randomUUID();
     addPlayer(g, { id: crypto.randomUUID(), name, tokenHash: t });
     games[g.id] = g;
@@ -92,7 +92,7 @@ function handle(path, method, body, token) {
     else {
       if (g.status !== 'finished') fail(400, 'The game is still going');
       if (!g.nextGameId) {
-        const next = createGame({ id: newId(), numPlayers: g.numPlayers });
+        const next = createGame({ id: newId(), numPlayers: g.numPlayers, teams: hasTeams(g) });
         next.players = g.players.map((p) => ({ ...p }));
         startGame(next);
         games[next.id] = next;

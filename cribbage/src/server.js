@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { openStore } from './store.js';
 import { createPusher, turnNotifications } from './push.js';
 import { nextAutomatic, BOT_NAMES } from './bot.js';
-import { createGame, addPlayer, startGame, discard, play, viewFor, RuleError } from './engine.js';
+import { createGame, addPlayer, startGame, discard, play, viewFor, hasTeams, RuleError } from './engine.js';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PUBLIC = join(ROOT, 'public');
@@ -134,7 +134,7 @@ const routes = [
     const body = await readJson(req);
     const numPlayers = Number(body.numPlayers);
     const name = cleanName(body.name);
-    const game = createGame({ id: newGameId(), numPlayers });
+    const game = createGame({ id: newGameId(), numPlayers, teams: body.teams !== false });
     const token = newToken();
     addPlayer(game, { id: randomUUID(), name, tokenHash: hash(token) });
     save(game);
@@ -188,7 +188,7 @@ const routes = [
     const seat = requireSeat(game, req);
     if (game.status !== 'finished') throw new HttpError(400, 'The game is still going');
     if (!game.nextGameId) {
-      const next = createGame({ id: newGameId(), numPlayers: game.numPlayers });
+      const next = createGame({ id: newGameId(), numPlayers: game.numPlayers, teams: hasTeams(game) });
       // Same people and seats; startGame picks a fresh random dealer.
       next.players = game.players.map((p) => ({ ...p, joinedAt: Date.now() }));
       next.previousGameId = game.id;

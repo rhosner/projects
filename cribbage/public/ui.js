@@ -1,6 +1,6 @@
 // Rendering helpers: cards, the peg board, small utilities.
 
-export const SIDE_COLORS = ['#f5b041', '#3dd6d0', '#f472b6'];
+export const SIDE_COLORS = ['#f5b041', '#3dd6d0', '#f472b6', '#a78bfa'];
 const SYM = { S: '♠', H: '♥', D: '♦', C: '♣' };
 const RANK_ORDER = 'A23456789TJQK';
 
@@ -110,6 +110,19 @@ export function mountBoard(el, sides, rows = 2) {
     const [fx, fy] = g.holeXY(121, lane);
     svg += `<circle class="hole start" cx="${sx}" cy="${sy}" r="2.6"/><circle class="hole finish" cx="${fx}" cy="${fy}" r="3.6" style="--c:${SIDE_COLORS[lane]}"/>`;
   }
+  // Skunk lines: a loser who hasn't passed 90 is skunked, one who hasn't passed 60 is
+  // double-skunked. Each line sits between the two holes it separates; where that
+  // falls on a turn at the end of a row, it becomes a short bar across the bend.
+  for (let lane = 0; lane < sides; lane++) {
+    for (const [a, cls] of [[90, 'skunk'], [60, 'skunk dbl']]) {
+      const [x1, y1] = g.holeXY(a, lane);
+      const [x2, y2] = g.holeXY(a + 1, lane);
+      const line = y1 === y2
+        ? { x1: (x1 + x2) / 2, x2: (x1 + x2) / 2, y1: y1 - 7, y2: y1 + 7 }
+        : { x1: x1 - 7, x2: x1 + 7, y1: (y1 + y2) / 2, y2: (y1 + y2) / 2 };
+      svg += `<line class="${cls}" x1="${line.x1}" y1="${line.y1}" x2="${line.x2}" y2="${line.y2}"><title>${a === 90 ? 'Skunk line (91)' : 'Double skunk line (61)'}</title></line>`;
+    }
+  }
   // Mile markers along the top edge of the first lane's rows.
   for (let m = 15; m <= 120; m += 15) {
     const row = Math.floor((m - 1) / g.perRow);
@@ -120,7 +133,8 @@ export function mountBoard(el, sides, rows = 2) {
     svg += `<g class="peg back" data-lane="${lane}" data-p="back" style="--c:${SIDE_COLORS[lane]}"><circle r="4.6"/></g>`;
     svg += `<g class="peg front" data-lane="${lane}" data-p="front" style="--c:${SIDE_COLORS[lane]}"><circle class="glow" r="9"/><circle r="5.2"/></g>`;
   }
-  el.innerHTML = `<svg viewBox="0 0 ${g.width} ${h}" class="board-svg" role="img" aria-label="Cribbage board">${svg}</svg>`;
+  el.innerHTML = `<svg viewBox="0 0 ${g.width} ${h}" class="board-svg" role="img" aria-label="Cribbage board">${svg}</svg>
+    <div class="board-legend"><span><i class="sk"></i>Skunk line: finish below 91</span><span><i class="sk dbl"></i>Double skunk: below 61</span></div>`;
   el._holeXY = g.holeXY;
 }
 

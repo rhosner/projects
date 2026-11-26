@@ -4,9 +4,10 @@ Turn-based cribbage for 2–4 friends. Every game is saved on the server, so any
 
 - **2 players**: 6 cards each, 2 to the crib
 - **3 players**: 5 cards each, 1 to the crib, plus 1 from the deck
-- **4 players**: two teams of two (seats 1 & 3 vs 2 & 4), 5 cards each, 1 to the crib
+- **4 players**: everyone for themselves, 5 cards each, 1 to the crib
+- **2 v 2**: two teams of two (seats 1 & 3 vs 2 & 4), 5 cards each, 1 to the crib
 
-Scoring is automatic: fifteens, pairs, runs, flushes (crib flushes need all 5 cards), nobs, his heels, go, last card and 31. First to 121 wins, and skunks are shown.
+Scoring is automatic: fifteens, pairs, runs, flushes (crib flushes need all 5 cards), nobs, his heels, go, last card and 31. First to 121 wins. The board marks the skunk line (between 90 and 91) and the double-skunk line (between 60 and 61), and skunks are called out at the end.
 
 ## Bots
 

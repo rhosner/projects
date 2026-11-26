@@ -2,7 +2,7 @@
 // shared by the server and the in-browser demo.
 import {
   newDeck, scoreHand, scorePegging, valueOf, rankOf, legalPlays, discardCount, sideOf,
-  discard, play, autoStep, peekStep, STEP_DELAY, randomInt,
+  discard, play, autoStep, peekStep, effectiveTurn, STEP_DELAY, randomInt,
 } from './engine.js';
 
 export const BOT_NAMES = ['Botley', 'Ada', 'Pegsy', 'Muggins'];
@@ -35,7 +35,7 @@ export function chooseDiscard(state, seat) {
   const hand = state.hands[seat];
   const k = discardCount(state.numPlayers);
   const unseen = newDeck().filter((c) => !hand.includes(c));
-  const myCrib = state.dealer === seat || (state.numPlayers === 4 && sideOf(state, state.dealer) === sideOf(state, seat));
+  const myCrib = state.dealer === seat || sideOf(state, state.dealer) === sideOf(state, seat);
   let best = null;
   for (const throwAway of combos(hand, k)) {
     const keep = hand.filter((c) => !throwAway.includes(c));
@@ -86,8 +86,10 @@ export function botMove(state) {
     return seat === -1 ? null : { type: 'discard', seat, cards: chooseDiscard(state, seat) };
   }
   if (state.phase === 'pegging') {
-    const seat = state.pegging.turn;
-    return state.players[seat]?.bot ? { type: 'play', seat, card: choosePlay(state, seat) } : null;
+    const seat = effectiveTurn(state);
+    // Only a real choice: a forced card or a "Go" is an automatic step, not a bot decision.
+    if (!state.players[seat]?.bot || legalPlays(state, seat).length < (state.autoPlay ? 2 : 1)) return null;
+    return { type: 'play', seat, card: choosePlay(state, seat) };
   }
   return null;
 }

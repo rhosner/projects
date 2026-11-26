@@ -1,6 +1,6 @@
 // Web Push: VAPID keys, subscription storage, and "it's your turn" notifications.
 import webpush from 'web-push';
-import { isTurn } from './engine.js';
+import { isTurn, sideOf } from './engine.js';
 
 /**
  * Decide who should hear about a state change.
@@ -13,7 +13,7 @@ export function turnNotifications(before, after, actorSeat) {
   const others = (seat) => names.filter((_, i) => i !== seat).join(', ');
 
   if (after.status === 'finished' && before.status !== 'finished') {
-    const winners = after.players.filter((_, i) => (after.numPlayers === 4 ? i % 2 : i) === after.winner);
+    const winners = after.players.filter((_, i) => sideOf(after, i) === after.winner);
     for (let seat = 0; seat < after.players.length; seat++) {
       if (seat === actorSeat) continue;
       const won = winners.some((p) => p === after.players[seat]);

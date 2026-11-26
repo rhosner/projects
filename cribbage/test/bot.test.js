@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createGame, addPlayer, discard, play, legalPlays, discardCount, settle } from '../src/engine.js';
-import { botMove, chooseDiscard } from '../src/bot.js';
+import { botMove, chooseDiscard, nextAutomatic } from '../src/bot.js';
 
 function seeded(seed) {
   let s = seed >>> 0;
@@ -9,9 +9,9 @@ function seeded(seed) {
 }
 
 // Seat 0 is the bot; seat 1 plays randomly (or is also a bot).
-function match(seed, { bothBots = false, n = 2 } = {}) {
+function match(seed, { bothBots = false, n = 2, teams = true } = {}) {
   const rng = seeded(seed);
-  const g = createGame({ id: 'g', numPlayers: n });
+  const g = createGame({ id: 'g', numPlayers: n, teams });
   for (let i = 0; i < n; i++) addPlayer(g, { id: `p${i}`, name: `P${i}`, tokenHash: 'x', bot: i % 2 === 0 || bothBots }, rng);
   let guard = 0;
   while (g.status === 'playing' && guard++ < 3000) {
@@ -56,5 +56,26 @@ test('bot finishes games in every format and beats a random player', () => {
     match(seed, { bothBots: true });
     match(seed, { n: 3 });
     match(seed, { n: 4 });
+    match(seed, { n: 4, teams: false });
+  }
+});
+
+// Regression: the server only ever applies one nextAutomatic() step at a time and
+// never calls settle(). A player passed over after saying "Go" once left the bot
+// looking at a turn it couldn't play (crash). Drive all-bot games that way.
+test('all-bot games run to the end through nextAutomatic alone', () => {
+  for (const [n, teams] of [[2, false], [3, false], [4, true], [4, false]]) {
+    for (let seed = 1; seed <= 15; seed++) {
+      const rng = seeded(seed * 977 + n);
+      const g = createGame({ id: 'g', numPlayers: n, teams });
+      for (let i = 0; i < n; i++) addPlayer(g, { id: `b${i}`, name: `B${i}`, tokenHash: '', bot: true }, rng);
+      let guard = 0;
+      while (g.status === 'playing') {
+        assert.ok(guard++ < 5000, 'game stalled');
+        const step = nextAutomatic(g, { rng });
+        assert.ok(step, `nothing to do in phase ${g.phase}`);
+        assert.ok(step.apply(g), `${step.kind} did nothing`);
+      }
+    }
   }
 });

@@ -115,8 +115,11 @@ export function scorePegging(pile, count) {
 // Game state
 // ---------------------------------------------------------------------------
 
-export const sideCount = (n) => (n === 4 ? 2 : n);
-export const sideOf = (state, seat) => (state.numPlayers === 4 ? seat % 2 : seat);
+// Only 4-player games can be played in teams (partners sit opposite: seats 0 & 2 vs 1 & 3).
+// Games saved before `teams` existed were 4-player = teams.
+export const hasTeams = (state) => state.teams ?? state.numPlayers === 4;
+export const sideCount = (n, teams = n === 4) => (n === 4 && teams ? 2 : n);
+export const sideOf = (state, seat) => (hasTeams(state) ? seat % 2 : seat);
 export const discardCount = (n) => (n === 2 ? 2 : 1);
 
 export class RuleError extends Error {}
@@ -146,20 +149,22 @@ export function sideName(state, side) {
   return names.join(' & ');
 }
 
-export function createGame({ id, numPlayers, autoPlay = true }) {
+export function createGame({ id, numPlayers, autoPlay = true, teams = true }) {
   if (![2, 3, 4].includes(numPlayers)) throw new RuleError('Games are for 2, 3 or 4 players');
+  teams = numPlayers === 4 && teams !== false;
   return {
     id,
     version: 1,
     createdAt: Date.now(),
     updatedAt: Date.now(),
     numPlayers,
+    teams,
     autoPlay,
     status: 'lobby',
     phase: 'lobby',
     players: [],
-    scores: Array(sideCount(numPlayers)).fill(0),
-    prevScores: Array(sideCount(numPlayers)).fill(0),
+    scores: Array(sideCount(numPlayers, teams)).fill(0),
+    prevScores: Array(sideCount(numPlayers, teams)).fill(0),
     winner: null,
     dealer: null,
     handNo: 0,
@@ -257,6 +262,23 @@ function cutStarter(state, rng) {
   state.phase = 'pegging';
 }
 
+/**
+ * Whose move it really is in pegging. Players with no cards, or who already said
+ * "Go" and still can't play, are passed over; that pass is instant and invisible,
+ * so everything (turn checks, bots, the view) must look past them the same way.
+ */
+export function effectiveTurn(state) {
+  const p = state.pegging;
+  if (!p) return null;
+  let t = p.turn;
+  for (let i = 0; i < state.numPlayers; i++) {
+    const canPlay = p.remaining[t].some((c) => valueOf(c) + p.count <= 31);
+    if (p.remaining[t].length && (canPlay || !p.saidGo[t])) return t;
+    t = nextSeat(state, t);
+  }
+  return p.turn;
+}
+
 export function legalPlays(state, seat) {
   const p = state.pegging;
   if (!p) return [];
@@ -265,7 +287,8 @@ export function legalPlays(state, seat) {
 
 export function play(state, seat, card, rng = randomInt) {
   if (state.phase !== 'pegging') throw new RuleError('Not time to play');
-  if (state.pegging.turn !== seat) throw new RuleError("It's not your turn");
+  if (effectiveTurn(state) !== seat) throw new RuleError("It's not your turn");
+  state.pegging.turn = seat; // apply any pass-overs that were pending
   if (!state.pegging.remaining[seat].includes(card)) throw new RuleError('That card is not in your hand');
   if (!legalPlays(state, seat).includes(card)) throw new RuleError('That would go over 31');
   noteHumanAction(state, seat);
@@ -448,7 +471,7 @@ export function isTurn(state, seat) {
   if (state.phase === 'pegging') {
     // "Your turn" means the game is waiting on your decision. A forced card or a
     // "Go" is played for you after a pause, so it doesn't count.
-    if (state.pegging.turn !== seat) return false;
+    if (effectiveTurn(state) !== seat) return false;
     return legalPlays(state, seat).length > (state.autoPlay ? 1 : 0);
   }
   return false;
@@ -463,6 +486,7 @@ export function viewFor(state, seat) {
     createdAt: state.createdAt,
     updatedAt: state.updatedAt,
     numPlayers: state.numPlayers,
+    teams: hasTeams(state),
     status: state.status,
     phase: state.phase,
     handNo: state.handNo,
@@ -486,11 +510,11 @@ export function viewFor(state, seat) {
     hand: me === null || state.status === 'lobby' ? [] : currentHand(state, me) ?? [],
     kept: me === null ? null : state.kept[me] ?? null,
     yourTurn: me !== null && isTurn(state, me),
-    legal: me !== null && state.phase === 'pegging' && p.turn === me ? legalPlays(state, me) : [],
+    legal: me !== null && state.phase === 'pegging' && effectiveTurn(state) === me ? legalPlays(state, me) : [],
     cribCount: state.crib.length,
     starter: state.starter,
     pegging: p
-      ? { count: p.count, pile: p.pile, history: p.history, turn: p.turn, lastPlayer: p.lastPlayer }
+      ? { count: p.count, pile: p.pile, history: p.history, turn: effectiveTurn(state), lastPlayer: p.lastPlayer }
       : null,
     lastHand: state.lastHand,
     log: state.log.slice(-80),

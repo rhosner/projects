@@ -171,7 +171,9 @@ const brand = `<a href="/" data-link class="brand"><span class="brand-mark">♣<
 // ---------------------------------------------------------------------------
 function renderHome() {
   const data = local.read();
-  let players = 2;
+  // Game formats offered on the home screen: [key, label, players, teams]
+  const MODES = [['2', '2', 2, false], ['3', '3', 3, false], ['4', '4', 4, false], ['4t', '2 v 2', 4, true]];
+  let mode = MODES[0];
   app.innerHTML = `
     <div class="home">
       <header class="topbar">${brand}</header>
@@ -186,7 +188,7 @@ function renderHome() {
             <input name="name" maxlength="20" autocomplete="nickname" placeholder="e.g. Sam" value="${esc(data.name)}" required></label>
           <div class="field"><span>Players</span>
             <div class="seg" role="radiogroup">
-              ${[2, 3, 4].map((n) => `<button type="button" role="radio" data-n="${n}" aria-checked="${n === 2}">${n}</button>`).join('')}
+              ${MODES.map(([key, label]) => `<button type="button" role="radio" data-n="${key}" aria-checked="${key === '2'}">${label}</button>`).join('')}
             </div>
             <small class="hint" id="players-hint">Classic head-to-head. 6 cards each, 2 to the crib.</small>
           </div>
@@ -212,13 +214,14 @@ function renderHome() {
   const hints = {
     2: 'Classic head-to-head. 6 cards each, 2 to the crib.',
     3: 'Everyone for themselves. 5 cards each, 1 to the crib, plus 1 from the deck.',
-    4: 'Two teams of two; partners sit opposite. 5 cards each, 1 to the crib.',
+    4: 'Four players, everyone for themselves. 5 cards each, 1 to the crib.',
+    '4t': 'Two teams of two; partners sit opposite. 5 cards each, 1 to the crib.',
   };
   for (const b of app.querySelectorAll('.seg button')) {
     b.onclick = () => {
-      players = Number(b.dataset.n);
+      mode = MODES.find(([key]) => key === b.dataset.n);
       app.querySelectorAll('.seg button').forEach((x) => x.setAttribute('aria-checked', x === b));
-      $('#players-hint').textContent = hints[players];
+      $('#players-hint').textContent = hints[mode[0]];
     };
   }
   async function create(withBots) {
@@ -227,7 +230,7 @@ function renderHome() {
     if (!name) return form.name.focus();
     form.querySelectorAll('button').forEach((b) => (b.disabled = true));
     try {
-      const { id, token } = await api('/games', { method: 'POST', body: { name, numPlayers: players } });
+      const { id, token } = await api('/games', { method: 'POST', body: { name, numPlayers: mode[2], teams: mode[3] } });
       local.remember(id, token);
       local.write((d) => (d.name = name));
       if (withBots) await api(`/games/${id}/bots`, { method: 'POST', gameId: id });
@@ -238,21 +241,9 @@ function renderHome() {
     }
   }
   $('#vs-bot').onclick = () => create(true);
-  $('#create').onsubmit = async (e) => {
+  $('#create').onsubmit = (e) => {
     e.preventDefault();
-    if (LOCAL) return create(true);
-    const name = e.target.name.value.trim();
-    const btn = e.target.querySelector('button[type=submit]');
-    btn.disabled = true;
-    try {
-      const { id, token } = await api('/games', { method: 'POST', body: { name, numPlayers: players } });
-      local.remember(id, token);
-      local.write((d) => (d.name = name));
-      go(`/g/${id}`);
-    } catch (err) {
-      toast(err.message);
-      btn.disabled = false;
-    }
+    create(LOCAL);
   };
   $('#copy-all').onclick = () => copy(allGamesLink(), 'Link to all your games copied');
   $('#paste-link').onsubmit = (e) => {
@@ -313,7 +304,7 @@ function gameRow(v) {
     .map((s, i) => `<span style="--c:${SIDE_COLORS[i]}">${s}</span>`)
     .join('<i>·</i>')}</span>`;
   return `<a class="game-row ${v.yourTurn ? 'is-turn' : ''}" href="/g/${v.id}" data-link>
-    <div><b>${esc(title)}</b><small>${v.numPlayers}-player · updated ${timeAgo(v.updatedAt)}</small></div>
+    <div><b>${esc(title)}</b><small>${v.teams ? '2 v 2' : `${v.numPlayers}-player`} · updated ${timeAgo(v.updatedAt)}</small></div>
     <div class="row-right">${scores}${status}<button class="icon-btn" data-forget="${v.id}" title="Remove from list">✕</button></div></a>`;
 }
 
@@ -611,9 +602,9 @@ function mountGame(id) {
     const link = `${location.origin}/g/${id}`;
     const seats = Array.from({ length: v.numPlayers }, (_, i) => {
       const p = v.players[i];
-      const team = v.numPlayers === 4 ? `<span class="team" style="--c:${SIDE_COLORS[i % 2]}">Team ${i % 2 ? 'B' : 'A'}</span>` : '';
+      const team = v.teams ? `<span class="team" style="--c:${SIDE_COLORS[i % 2]}">Team ${i % 2 ? 'B' : 'A'}</span>` : '';
       return p
-        ? `<li class="seat-row filled"><span class="avatar" style="--c:${SIDE_COLORS[v.numPlayers === 4 ? i % 2 : i]}">${esc(p.name[0].toUpperCase())}</span><b>${esc(p.name)}${p.bot ? ' 🤖' : ''}${p.seat === v.you ? ' <span class="muted">(you)</span>' : ''}</b>${team}</li>`
+        ? `<li class="seat-row filled"><span class="avatar" style="--c:${SIDE_COLORS[v.teams ? i % 2 : i]}">${esc(p.name[0].toUpperCase())}</span><b>${esc(p.name)}${p.bot ? ' 🤖' : ''}${p.seat === v.you ? ' <span class="muted">(you)</span>' : ''}</b>${team}</li>`
         : `<li class="seat-row"><span class="avatar empty">?</span><span class="muted">Open seat</span>${team}</li>`;
     }).join('');
     return `
@@ -624,7 +615,7 @@ function mountGame(id) {
           ${navigator.share ? '<button class="btn ghost" id="share-invite">Share</button>' : ''}</div>
         <ul class="seats">${seats}</ul>
         <button class="btn" id="fill-bots">🤖 Fill empty seats with bots</button>
-        ${v.numPlayers === 4 ? '<p class="hint">Seats 1 &amp; 3 play Team A against seats 2 &amp; 4 (Team B), in join order.</p>' : ''}
+        ${v.teams ? '<p class="hint">Seats 1 &amp; 3 play Team A against seats 2 &amp; 4 (Team B), in join order.</p>' : ''}
       </div>`;
   }
 
@@ -652,7 +643,7 @@ function mountGame(id) {
 
   function seatHTML(v, p) {
     const color = SIDE_COLORS[p.side];
-    const team = v.numPlayers === 4 ? `<span class="team" style="--c:${color}">${v.you !== null && p.side === v.players[v.you].side ? 'Partner' : 'Opponent'}</span>` : '';
+    const team = v.teams ? `<span class="team" style="--c:${color}">${v.you !== null && p.side === v.players[v.you].side ? 'Partner' : 'Opponent'}</span>` : '';
     let note = '';
     if (v.status === 'playing') {
       if (v.phase === 'discard') note = p.discarded ? '✓ Ready' : 'Choosing…';
