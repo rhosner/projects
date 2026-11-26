@@ -8,6 +8,8 @@ import {
   discard,
   play,
   legalPlays,
+  settle,
+  autoStep,
   viewFor,
   discardCount,
   WIN_SCORE,
@@ -58,9 +60,9 @@ function seeded(seed) {
   };
 }
 
-function simulate(numPlayers, seed) {
+function simulate(numPlayers, seed, teams = true) {
   const rng = seeded(seed);
-  const g = createGame({ id: 'g', numPlayers });
+  const g = createGame({ id: 'g', numPlayers, teams });
   for (let i = 0; i < numPlayers; i++) addPlayer(g, { id: `p${i}`, name: `P${i}`, tokenHash: 'x' }, rng);
   let steps = 0;
   let maxHands = 0;
@@ -70,6 +72,7 @@ function simulate(numPlayers, seed) {
       for (let s = 0; s < numPlayers; s++) {
         if (!g.discarded[s] && g.status === 'playing' && g.phase === 'discard') {
           discard(g, s, g.hands[s].slice(0, discardCount(numPlayers)), rng);
+          settle(g, rng);
         }
       }
     } else if (g.phase === 'pegging') {
@@ -77,6 +80,7 @@ function simulate(numPlayers, seed) {
       const legal = legalPlays(g, t);
       assert.ok(legal.length > 1 || !g.autoPlay, 'engine only waits on a real choice');
       play(g, t, legal[rng(legal.length)], rng);
+      settle(g, rng);
     }
     maxHands = g.handNo;
     // Invariants
@@ -122,4 +126,46 @@ test('rule violations are rejected', () => {
   assert.throws(() => addPlayer(g, { id: 'c', name: 'C', tokenHash: 'z' }, rng), /already started/);
   discard(g, 0, g.hands[0].slice(0, 2), rng);
   assert.throws(() => discard(g, 0, ['AS', '2S'], rng), /already discarded/);
+});
+
+test('automatic steps happen one at a time and end in a counted, then dealt, hand', () => {
+  const rng = seeded(5);
+  const g = createGame({ id: 'g', numPlayers: 2 });
+  addPlayer(g, { id: 'a', name: 'A', tokenHash: 'x' }, rng);
+  addPlayer(g, { id: 'b', name: 'B', tokenHash: 'y' }, rng);
+  discard(g, 0, g.hands[0].slice(0, 2), rng);
+  discard(g, 1, g.hands[1].slice(0, 2), rng);
+  const kinds = [];
+  let guard = 0;
+  while (g.status === 'playing' && g.handNo === 1 && guard++ < 200) {
+    const k = autoStep(g, rng);
+    if (k) {
+      kinds.push(k);
+      continue;
+    }
+    play(g, g.pegging.turn, legalPlays(g, g.pegging.turn)[0], rng); // a human decision
+  }
+  if (g.status === 'playing') {
+    // The hand ends with: (optional last card) -> end-pegging (show) -> deal, each a separate step.
+    const tail = kinds.slice(-2);
+    assert.deepEqual(tail, ['end-pegging', 'deal']);
+    assert.equal(g.phase, 'discard');
+    assert.equal(g.lastHand.handNo, 1);
+  }
+  assert.ok(kinds.every((k) => ['forced', 'go', 'go-point', 'last-card', 'end-pegging', 'deal'].includes(k)), kinds.join());
+});
+
+test('4-player free-for-all: four separate scores, everyone plays alone', () => {
+  const g = createGame({ id: 'g', numPlayers: 4, teams: false });
+  assert.equal(g.scores.length, 4);
+  for (let seed = 1; seed <= 20; seed++) simulate(4, seed * 101, false);
+  // Teams are only possible with 4 players.
+  assert.equal(createGame({ id: 'g', numPlayers: 3, teams: true }).teams, false);
+  assert.equal(createGame({ id: 'g', numPlayers: 4 }).teams, true, 'teams by default');
+});
+
+test('games saved before the teams option still play as teams', () => {
+  const g = createGame({ id: 'g', numPlayers: 4 });
+  delete g.teams;
+  assert.equal(viewFor(g, null).teams, true);
 });

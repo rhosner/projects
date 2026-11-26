@@ -5,7 +5,8 @@ import { join, extname, normalize, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openStore } from './store.js';
 import { createPusher, turnNotifications } from './push.js';
-import { createGame, addPlayer, startGame, discard, play, viewFor, RuleError } from './engine.js';
+import { nextAutomatic, BOT_NAMES } from './bot.js';
+import { createGame, addPlayer, startGame, discard, play, viewFor, hasTeams, RuleError } from './engine.js';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PUBLIC = join(ROOT, 'public');
@@ -88,6 +89,37 @@ function save(game, before = null, actorSeat = null) {
   store.put(game);
   broadcast(game);
   if (before) pusher.notify(game, turnNotifications(before, game, actorSeat)).catch(() => {});
+  scheduleBots(game.id);
+}
+
+// --- automatic steps and bots ---------------------------------------------------
+// Forced plays, "Go", scoring, dealing and bot moves each happen after a short
+// pause, one step per save, so everyone watching can follow along. Each tick
+// reloads the game and recomputes the step, so a human move made during a pause
+// is never overwritten.
+const PACE = Number(process.env.PACE ?? 1); // multiplier on every pause; tests use a tiny value
+const autoTimers = new Map();
+const RECENT_MS = 20_000;
+function scheduleBots(id) {
+  if (autoTimers.has(id)) return;
+  const game = store.get(id);
+  const next = game && nextAutomatic(game, { pace: PACE });
+  if (!next) return;
+  autoTimers.set(id, setTimeout(() => {
+    autoTimers.delete(id);
+    const g = store.get(id);
+    const step = g && nextAutomatic(g, { pace: PACE });
+    if (!step) return;
+    const before = structuredClone(g);
+    try {
+      if (!step.apply(g)) return;
+    } catch (err) {
+      return console.error('automatic step failed', err);
+    }
+    // Don't ping someone about a turn that came back to them seconds after they acted.
+    const actor = g.lastActor != null && Date.now() - (g.lastActorAt ?? 0) < RECENT_MS ? g.lastActor : null;
+    save(g, before, actor);
+  }, next.delay));
 }
 
 function requireSeat(game, req) {
@@ -102,7 +134,7 @@ const routes = [
     const body = await readJson(req);
     const numPlayers = Number(body.numPlayers);
     const name = cleanName(body.name);
-    const game = createGame({ id: newGameId(), numPlayers });
+    const game = createGame({ id: newGameId(), numPlayers, teams: body.teams !== false });
     const token = newToken();
     addPlayer(game, { id: randomUUID(), name, tokenHash: hash(token) });
     save(game);
@@ -111,6 +143,7 @@ const routes = [
 
   ['GET', /^\/api\/games\/([a-z0-9]+)$/, async (req, res, [id]) => {
     const game = loadGame(id);
+    scheduleBots(id); // resumes paused steps after a server restart
     send(res, 200, viewFor(game, seatFor(game, req)));
   }],
 
@@ -155,7 +188,7 @@ const routes = [
     const seat = requireSeat(game, req);
     if (game.status !== 'finished') throw new HttpError(400, 'The game is still going');
     if (!game.nextGameId) {
-      const next = createGame({ id: newGameId(), numPlayers: game.numPlayers });
+      const next = createGame({ id: newGameId(), numPlayers: game.numPlayers, teams: hasTeams(game) });
       // Same people and seats; startGame picks a fresh random dealer.
       next.players = game.players.map((p) => ({ ...p, joinedAt: Date.now() }));
       next.previousGameId = game.id;
@@ -164,6 +197,7 @@ const routes = [
       next.version = 1;
       store.put(next);
       pusher.notify(next, turnNotifications(lobby, next, seat)).catch(() => {});
+      scheduleBots(next.id);
       game.nextGameId = next.id;
       save(game);
     }
@@ -186,6 +220,20 @@ const routes = [
       subs?.delete(res);
       if (subs && !subs.size) subscribers.delete(id);
     });
+  }],
+
+  ['POST', /^\/api\/games\/([a-z0-9]+)\/bots$/, async (req, res, [id]) => {
+    const game = loadGame(id);
+    const seat = requireSeat(game, req);
+    if (game.status !== 'lobby') throw new HttpError(400, 'The game has already started');
+    const before = structuredClone(game);
+    const taken = new Set(game.players.map((p) => p.name.toLowerCase()));
+    const names = BOT_NAMES.filter((n) => !taken.has(n.toLowerCase()));
+    while (game.players.length < game.numPlayers) {
+      addPlayer(game, { id: randomUUID(), name: names.shift() ?? `Bot ${game.players.length}`, tokenHash: '', bot: true });
+    }
+    save(game, before, seat);
+    send(res, 200, viewFor(game, seat));
   }],
 
   ['GET', /^\/api\/push\/key$/, async (_req, res) => send(res, 200, { publicKey: pusher.publicKey })],

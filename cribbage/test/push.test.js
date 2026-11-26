@@ -5,7 +5,7 @@ import { createECDH, randomBytes, createPublicKey, verify } from 'node:crypto';
 import { createRequire } from 'node:module';
 import webpush from 'web-push';
 import { createPusher, turnNotifications } from '../src/push.js';
-import { createGame, addPlayer, discard, play, legalPlays } from '../src/engine.js';
+import { createGame, addPlayer, discard, play, legalPlays, autoStep } from '../src/engine.js';
 
 const require = createRequire(import.meta.url);
 const ece = require('http_ece'); // the decryption a browser does, from an independent implementation
@@ -140,22 +140,38 @@ test('turnNotifications: who gets pinged, and when', () => {
   if (g.phase === 'pegging' && g.pegging.turn === 0) assert.deepEqual(notes.map((n) => n.seat), [0]);
   else assert.deepEqual(notes, []);
 
-  // Play the game out; every note must target someone who is now on the clock, never the actor.
-  let guard = 0;
-  while (g.status === 'playing' && guard++ < 2000) {
-    const seat = g.phase === 'discard' ? g.discarded.indexOf(false) : g.pegging.turn;
-    before = structuredClone(g);
-    if (g.phase === 'discard') discard(g, seat, g.hands[seat].slice(0, 2), rng);
-    else play(g, seat, legalPlays(g, seat)[0], rng);
-    for (const n of turnNotifications(before, g, seat)) {
-      assert.notEqual(n.seat, seat, 'actor is never notified');
+  // Play it out the way the server does: each human move and each automatic step is
+  // its own save. Notes must only ever target someone now on the clock, never the actor.
+  const check = (b, actor) => {
+    for (const n of turnNotifications(b, g, actor)) {
+      assert.notEqual(n.seat, actor, 'actor is never notified');
       if (g.status === 'playing') assert.ok(g.phase === 'discard' ? !g.discarded[n.seat] : g.pegging.turn === n.seat);
     }
-    if (g.status === 'finished') {
-      const last = turnNotifications(before, g, seat);
-      assert.equal(last.length, 1, 'the other player hears the game ended');
-      assert.match(last[0].title, /won|over/);
+    if (g.status === 'finished' && b.status !== 'finished') {
+      const last = turnNotifications(b, g, actor);
+      assert.ok(last.length >= 1, 'someone hears the game ended');
+      assert.ok(last.every((x) => /won|over/.test(x.title)));
     }
+  };
+  let guard = 0;
+  let dealt = 0;
+  while (g.status === 'playing' && guard++ < 4000) {
+    before = structuredClone(g);
+    const kind = autoStep(g, rng);
+    if (kind) {
+      if (kind === 'deal') {
+        dealt++;
+        // A new deal pings both players when nobody acted recently.
+        assert.equal(turnNotifications(before, g, null).length, 2);
+      }
+      check(before, null);
+      continue;
+    }
+    const seat = g.phase === 'discard' ? g.discarded.indexOf(false) : g.pegging.turn;
+    if (g.phase === 'discard') discard(g, seat, g.hands[seat].slice(0, 2), rng);
+    else play(g, seat, legalPlays(g, seat)[0], rng);
+    check(before, seat);
   }
+  assert.ok(dealt >= 2);
   assert.equal(g.status, 'finished');
 });

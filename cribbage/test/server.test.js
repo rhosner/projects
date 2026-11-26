@@ -13,7 +13,7 @@ let proc;
 before(async () => {
   const dir = mkdtempSync(join(tmpdir(), 'crib-'));
   proc = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'src/server.js'], {
-    env: { ...process.env, PORT: String(PORT), DB_PATH: join(dir, 't.db') },
+    env: { ...process.env, PORT: String(PORT), DB_PATH: join(dir, 't.db'), PACE: '0.005' },
     stdio: 'pipe',
   });
   for (let i = 0; i < 50; i++) {
@@ -34,6 +34,32 @@ async function call(path, { method = 'GET', body, token } = {}) {
   });
   return { status: res.status, data: await res.json() };
 }
+
+test('bots fill seats and play their own turns', async () => {
+  const created = await call('/api/games', { method: 'POST', body: { name: 'Sol', numPlayers: 3 } });
+  const { id, token } = created.data;
+  assert.equal((await call(`/api/games/${id}/bots`, { method: 'POST' })).status, 403, 'needs a seat');
+  const r = await call(`/api/games/${id}/bots`, { method: 'POST', token });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.status, 'playing');
+  assert.deepEqual(r.data.players.map((p) => p.bot), [false, true, true]);
+
+  const solo = await call('/api/games', { method: 'POST', body: { name: 'Kit', numPlayers: 4, teams: false } });
+  const soloView = await call(`/api/games/${solo.data.id}/bots`, { method: 'POST', token: solo.data.token });
+  assert.equal(soloView.data.teams, false);
+  assert.equal(soloView.data.scores.length, 4, 'four separate scores');
+  assert.deepEqual(soloView.data.players.map((p) => p.side), [0, 1, 2, 3]);
+  // Bots discard by themselves; afterwards only the human is still holding 5 cards.
+  let v;
+  for (let i = 0; i < 50; i++) {
+    await new Promise((res) => setTimeout(res, 50));
+    v = (await call(`/api/games/${id}`, { token })).data;
+    if (v.players[1].discarded && v.players[2].discarded) break;
+  }
+  assert.ok(v.players[1].discarded && v.players[2].discarded, 'bots discarded');
+  assert.equal(v.hand.length, 5);
+  assert.equal(v.yourTurn, true);
+});
 
 test('4-player game over HTTP, with auth checks and rematch', async () => {
   const created = await call('/api/games', { method: 'POST', body: { name: 'Ann', numPlayers: 4 } });
@@ -67,29 +93,41 @@ test('4-player game over HTTP, with auth checks and rematch', async () => {
 
   let guard = 0;
   let v;
-  while (guard++ < 2000) {
+  let checkedOutOfTurn = false;
+  while (guard++ < 4000) {
     const views = await Promise.all(tokens.map((token) => call(`/api/games/${id}`, { token })));
     v = views[0].data;
     if (v.status === 'finished') break;
     const mover = views.find((x) => x.data.yourTurn);
-    assert.ok(mover, 'someone must be on the clock');
+    // Between decisions the server pauses for automatic steps (forced plays, Go,
+    // counting, dealing). Only act when the game is genuinely waiting on a player.
+    const waiting = mover && (mover.data.phase === 'discard' || mover.data.legal.length > 1);
+    if (!waiting || views.some((x) => x.data.version !== v.version)) {
+      await new Promise((r) => setTimeout(r, 5));
+      continue;
+    }
     const me = mover.data;
     const token = tokens[me.you];
     if (me.phase === 'discard') {
       const r = await call(`/api/games/${id}/discard`, { method: 'POST', body: { cards: me.hand.slice(0, 1) }, token });
       assert.equal(r.status, 200, JSON.stringify(r.data));
     } else {
-      const outOfTurn = views.find((x) => !x.data.yourTurn).data;
-      const bad = await call(`/api/games/${id}/play`, {
-        method: 'POST', body: { card: outOfTurn.hand[0] ?? 'AS' }, token: tokens[outOfTurn.you],
-      });
-      assert.equal(bad.status, 400, 'out-of-turn play rejected');
+      if (!checkedOutOfTurn) {
+        // Safe from races: the game can't move until `me` chooses a card.
+        checkedOutOfTurn = true;
+        const outOfTurn = views.find((x) => !x.data.yourTurn).data;
+        const bad = await call(`/api/games/${id}/play`, {
+          method: 'POST', body: { card: outOfTurn.hand[0] ?? 'AS' }, token: tokens[outOfTurn.you],
+        });
+        assert.equal(bad.status, 400, 'out-of-turn play rejected');
+      }
       const r = await call(`/api/games/${id}/play`, { method: 'POST', body: { card: me.legal[0] }, token });
       assert.equal(r.status, 200, JSON.stringify(r.data));
     }
   }
   assert.equal(v.status, 'finished');
   assert.equal(v.scores[v.winner], 121);
+  assert.ok(checkedOutOfTurn, 'out-of-turn check ran');
 
   const re1 = await call(`/api/games/${id}/rematch`, { method: 'POST', token: tokens[2] });
   const re2 = await call(`/api/games/${id}/rematch`, { method: 'POST', token: tokens[1] });

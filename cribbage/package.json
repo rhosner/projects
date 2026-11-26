@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning src/server.js",
     "dev": "node --disable-warning=ExperimentalWarning --watch src/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "demo": "node scripts/build-demo.mjs"
   },
   "dependencies": {
     "web-push": "^3.6.7"

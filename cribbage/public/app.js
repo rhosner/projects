@@ -75,7 +75,12 @@ function importLink(text) {
 // ---------------------------------------------------------------------------
 // API
 // ---------------------------------------------------------------------------
+// The demo build sets window.CRIB_TRANSPORT to an in-browser backend
+// ({ api, subscribe }); the real app talks to the server.
+const LOCAL = window.CRIB_TRANSPORT || null;
+
 async function api(path, { method = 'GET', body, gameId } = {}) {
+  if (LOCAL) return LOCAL.api(path, { method, body, token: gameId && local.token(gameId) });
   const headers = { 'Content-Type': 'application/json' };
   const token = gameId && local.token(gameId);
   if (token) headers['X-Player-Token'] = token;
@@ -110,10 +115,18 @@ async function copy(text, label = 'Copied') {
 // Router
 // ---------------------------------------------------------------------------
 let teardown = () => {};
+let memPath = '/'; // the demo routes in memory: its frame doesn't support URL paths
+const currentPath = () => (LOCAL ? memPath : location.pathname);
 function route() {
   teardown();
   teardown = () => {};
   document.title = 'Cribbage';
+  if (LOCAL) {
+    const m = currentPath().match(/^\/g\/([a-z0-9]+)/);
+    if (m) teardown = mountGame(m[1]);
+    else renderHome();
+    return;
+  }
   const m = location.pathname.match(/^\/g\/([a-z0-9]+)/);
   if (m) {
     // Device links carry the token in the hash so it never hits server logs.
@@ -133,11 +146,16 @@ function route() {
   }
 }
 function go(path) {
+  if (LOCAL) {
+    memPath = path;
+    route();
+    window.scrollTo(0, 0);
+    return;
+  }
   history.pushState(null, '', path);
-  registerServiceWorker();
-route();
+  route();
 }
-window.addEventListener('popstate', route);
+if (!LOCAL) window.addEventListener('popstate', route);
 document.addEventListener('click', (e) => {
   const a = e.target.closest('a[data-link]');
   if (a && !e.metaKey && !e.ctrlKey) {
@@ -153,7 +171,9 @@ const brand = `<a href="/" data-link class="brand"><span class="brand-mark">♣<
 // ---------------------------------------------------------------------------
 function renderHome() {
   const data = local.read();
-  let players = 2;
+  // Game formats offered on the home screen: [key, label, players, teams]
+  const MODES = [['2', '2', 2, false], ['3', '3', 3, false], ['4', '4', 4, false], ['4t', '2 v 2', 4, true]];
+  let mode = MODES[0];
   app.innerHTML = `
     <div class="home">
       <header class="topbar">${brand}</header>
@@ -168,16 +188,18 @@ function renderHome() {
             <input name="name" maxlength="20" autocomplete="nickname" placeholder="e.g. Sam" value="${esc(data.name)}" required></label>
           <div class="field"><span>Players</span>
             <div class="seg" role="radiogroup">
-              ${[2, 3, 4].map((n) => `<button type="button" role="radio" data-n="${n}" aria-checked="${n === 2}">${n}</button>`).join('')}
+              ${MODES.map(([key, label]) => `<button type="button" role="radio" data-n="${key}" aria-checked="${key === '2'}">${label}</button>`).join('')}
             </div>
             <small class="hint" id="players-hint">Classic head-to-head. 6 cards each, 2 to the crib.</small>
           </div>
-          <button class="btn primary big" type="submit">Create game &amp; get invite link</button>
+          ${LOCAL ? '' : '<button class="btn primary big" type="submit">Create game &amp; get invite link</button>'}
+          <button class="btn ${LOCAL ? 'primary' : ''} big" type="button" id="vs-bot">🤖 ${LOCAL ? 'Start a game' : 'Play bots right now'}</button>
+          <small class="hint center-hint">${LOCAL ? 'Every other seat is a bot.' : 'Fills every other seat with a bot.'}</small>
         </form>
         <section class="panel games">
           <h2>Your games</h2>
           <div id="game-list" class="game-list"><p class="muted">Loading…</p></div>
-          <details class="transfer" ${isStandalone() && !Object.keys(data.games).length ? 'open' : ''}>
+          <details class="transfer ${LOCAL ? 'hidden' : ''}" ${isStandalone() && !Object.keys(data.games).length ? 'open' : ''}>
             <summary>Move your games to another device</summary>
             <p class="hint">Copy a link on the device that has your games, then paste it here on the new one. It signs in as you, so don't send it to anyone else.</p>
             <div class="invite-box">
@@ -192,29 +214,36 @@ function renderHome() {
   const hints = {
     2: 'Classic head-to-head. 6 cards each, 2 to the crib.',
     3: 'Everyone for themselves. 5 cards each, 1 to the crib, plus 1 from the deck.',
-    4: 'Two teams of two; partners sit opposite. 5 cards each, 1 to the crib.',
+    4: 'Four players, everyone for themselves. 5 cards each, 1 to the crib.',
+    '4t': 'Two teams of two; partners sit opposite. 5 cards each, 1 to the crib.',
   };
   for (const b of app.querySelectorAll('.seg button')) {
     b.onclick = () => {
-      players = Number(b.dataset.n);
+      mode = MODES.find(([key]) => key === b.dataset.n);
       app.querySelectorAll('.seg button').forEach((x) => x.setAttribute('aria-checked', x === b));
-      $('#players-hint').textContent = hints[players];
+      $('#players-hint').textContent = hints[mode[0]];
     };
   }
-  $('#create').onsubmit = async (e) => {
-    e.preventDefault();
-    const name = e.target.name.value.trim();
-    const btn = e.target.querySelector('button[type=submit]');
-    btn.disabled = true;
+  async function create(withBots) {
+    const form = $('#create');
+    const name = form.name.value.trim();
+    if (!name) return form.name.focus();
+    form.querySelectorAll('button').forEach((b) => (b.disabled = true));
     try {
-      const { id, token } = await api('/games', { method: 'POST', body: { name, numPlayers: players } });
+      const { id, token } = await api('/games', { method: 'POST', body: { name, numPlayers: mode[2], teams: mode[3] } });
       local.remember(id, token);
       local.write((d) => (d.name = name));
+      if (withBots) await api(`/games/${id}/bots`, { method: 'POST', gameId: id });
       go(`/g/${id}`);
     } catch (err) {
       toast(err.message);
-      btn.disabled = false;
+      form.querySelectorAll('button').forEach((b) => (b.disabled = false));
     }
+  }
+  $('#vs-bot').onclick = () => create(true);
+  $('#create').onsubmit = (e) => {
+    e.preventDefault();
+    create(LOCAL);
   };
   $('#copy-all').onclick = () => copy(allGamesLink(), 'Link to all your games copied');
   $('#paste-link').onsubmit = (e) => {
@@ -246,7 +275,7 @@ async function loadGameList() {
     btn.onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      if (confirm('Remove this game from your list? (It stays on the server; you can rejoin with your device link.)')) {
+      if (LOCAL || confirm('Remove this game from your list? (It stays on the server; you can rejoin with your device link.)')) {
         local.forget(btn.dataset.forget);
         loadGameList();
       }
@@ -275,8 +304,110 @@ function gameRow(v) {
     .map((s, i) => `<span style="--c:${SIDE_COLORS[i]}">${s}</span>`)
     .join('<i>·</i>')}</span>`;
   return `<a class="game-row ${v.yourTurn ? 'is-turn' : ''}" href="/g/${v.id}" data-link>
-    <div><b>${esc(title)}</b><small>${v.numPlayers}-player · updated ${timeAgo(v.updatedAt)}</small></div>
+    <div><b>${esc(title)}</b><small>${v.teams ? '2 v 2' : `${v.numPlayers}-player`} · updated ${timeAgo(v.updatedAt)}</small></div>
     <div class="row-right">${scores}${status}<button class="icon-btn" data-forget="${v.id}" title="Remove from list">✕</button></div></a>`;
+}
+
+// ---------------------------------------------------------------------------
+// Scored-hand highlighting: light up the cards behind one scoring line.
+// ---------------------------------------------------------------------------
+function highlight(show, li) {
+  show.querySelectorAll('.items li.active').forEach((x) => x.classList.remove('active'));
+  show.querySelectorAll('.show-cards .card.lit').forEach((x) => x.classList.remove('lit'));
+  show.classList.toggle('highlighting', !!li);
+  if (!li) return;
+  li.classList.add('active');
+  const cards = li.dataset.cards.split(',');
+  show.querySelectorAll('.show-cards .card').forEach((c) => c.classList.toggle('lit', cards.includes(c.dataset.card)));
+}
+
+// Hover, focus or tap a scoring line to see which cards made it.
+const lineOf = (e) => e.target.closest?.('.show:not(.pending) .items li');
+document.addEventListener('mouseover', (e) => {
+  const li = lineOf(e);
+  if (li && !li.closest('.counting-now')) highlight(li.closest('.show'), li);
+});
+document.addEventListener('mouseout', (e) => {
+  const li = lineOf(e);
+  if (li && !li.contains(e.relatedTarget) && !li.closest('.counting-now')) highlight(li.closest('.show'), null);
+});
+document.addEventListener('focusin', (e) => {
+  const li = lineOf(e);
+  if (li && !li.closest('.counting-now')) highlight(li.closest('.show'), li);
+});
+document.addEventListener('click', (e) => {
+  const li = lineOf(e);
+  if (!li || li.closest('.counting-now')) return;
+  const show = li.closest('.show');
+  highlight(show, li.classList.contains('active') ? null : li); // tap again to clear (touch screens)
+});
+
+/**
+ * Count each hand out loud, one scoring line at a time: light its cards, add its
+ * points to a running total, then move on to the next hand. Returns controls to
+ * finish instantly (Skip) or stop (modal closed).
+ */
+function countThrough(root, onDone) {
+  const STEP = 750;
+  const BETWEEN = 600;
+  const shows = [...root.querySelectorAll('.show')];
+  const timers = [];
+  let stopped = false;
+  shows.forEach((sh) => sh.classList.add('pending'));
+
+  const settleShow = (sh) => {
+    highlight(sh, null);
+    sh.classList.remove('pending', 'counting-now');
+    sh.classList.add('counted');
+    sh.querySelectorAll('.items li').forEach((li) => li.classList.add('shown'));
+    sh.querySelector('.show-total').textContent = sh.dataset.total;
+    sh.querySelector('.say').textContent = '';
+  };
+  const finish = () => {
+    if (stopped) return;
+    stopped = true;
+    timers.forEach(clearTimeout);
+    shows.forEach(settleShow);
+    root.classList.remove('counting');
+    onDone?.();
+  };
+
+  let t = 400;
+  const at = (fn) => timers.push(setTimeout(() => !stopped && root.isConnected && fn(), t));
+  for (const sh of shows) {
+    const lines = [...sh.querySelectorAll('.items li')];
+    at(() => {
+      sh.classList.remove('pending');
+      sh.classList.add('counting-now');
+      sh.querySelector('.show-total').textContent = '0';
+      sh.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+    t += 350;
+    let running = 0;
+    for (const li of lines) {
+      running += Number(li.dataset.points);
+      const total = running;
+      at(() => {
+        li.classList.add('shown');
+        highlight(sh, li);
+        sh.querySelector('.say').textContent = `${li.dataset.label} · ${total}`;
+        const el = sh.querySelector('.show-total');
+        el.textContent = total;
+        el.classList.remove('tick');
+        void el.offsetWidth; // restart the pop animation
+        el.classList.add('tick');
+      });
+      t += STEP;
+    }
+    if (!lines.length) {
+      at(() => (sh.querySelector('.say').textContent = 'Nineteen'));
+      t += STEP;
+    }
+    at(() => settleShow(sh));
+    t += BETWEEN;
+  }
+  at(finish);
+  return { finish, stop: () => { stopped = true; timers.forEach(clearTimeout); } };
 }
 
 // ---------------------------------------------------------------------------
@@ -344,7 +475,7 @@ function mountGame(id) {
 
   function notifyIfTurn(v) {
     document.title = v.yourTurn ? '● Your turn · Cribbage' : 'Cribbage';
-    if (v.you !== null && !G.pushSynced) {
+    if (v.you !== null && !G.pushSynced && !LOCAL) {
       G.pushSynced = true;
       syncPush();
     }
@@ -421,6 +552,7 @@ function mountGame(id) {
 
   function renderPushBanner(v) {
     const el = $('#push-banner');
+    if (LOCAL) return;
     const d = local.read();
     const avail = pushAvailability();
     const show = v.you !== null && v.status !== 'finished' && !pushOn() && d.push[id] !== 'off' && !d.pushDismissed[id]
@@ -480,16 +612,16 @@ function mountGame(id) {
   function renderTopbar(v) {
     const notifOn = pushOn();
     const avail = pushAvailability();
-    const showBell = v.you !== null && (avail === 'ready' || avail === 'ios-install');
+    const showBell = !LOCAL && v.you !== null && (avail === 'ready' || avail === 'ios-install');
     const meta = v.status === 'lobby' ? 'Lobby' : `Hand ${v.handNo} · ${esc(v.players[v.dealer].name)} deals`;
     $('#topbar').innerHTML = `${brand}
       <div class="top-meta">${meta}</div>
       <div class="top-actions">
         ${showBell ? `<button class="icon-btn ${notifOn ? 'bell-on' : ''}" id="notif" title="${notifOn ? 'Notifications on (tap to turn off)' : 'Turn on notifications'}" aria-pressed="${notifOn}">${notifOn ? '🔔' : '🔕'}</button>` : ''}
-        <button class="btn ghost" id="invite">Invite</button>
-        ${v.you !== null ? `<button class="btn ghost" id="device" title="Open this game as you on another device">Other device</button>` : ''}
+        ${LOCAL ? '<span class="pill">Demo · runs in your browser</span>' : '<button class="btn ghost" id="invite">Invite</button>'}
+        ${v.you !== null && !LOCAL ? `<button class="btn ghost" id="device" title="Open this game as you on another device">Other device</button>` : ''}
       </div>`;
-    $('#invite').onclick = () => copy(`${location.origin}/g/${id}`, 'Invite link copied');
+    if ($('#invite')) $('#invite').onclick = () => copy(`${location.origin}/g/${id}`, 'Invite link copied');
     const dev = $('#device');
     if (dev) {
       dev.onclick = () => {
@@ -572,9 +704,9 @@ function mountGame(id) {
     const link = `${location.origin}/g/${id}`;
     const seats = Array.from({ length: v.numPlayers }, (_, i) => {
       const p = v.players[i];
-      const team = v.numPlayers === 4 ? `<span class="team" style="--c:${SIDE_COLORS[i % 2]}">Team ${i % 2 ? 'B' : 'A'}</span>` : '';
+      const team = v.teams ? `<span class="team" style="--c:${SIDE_COLORS[i % 2]}">Team ${i % 2 ? 'B' : 'A'}</span>` : '';
       return p
-        ? `<li class="seat-row filled"><span class="avatar" style="--c:${SIDE_COLORS[v.numPlayers === 4 ? i % 2 : i]}">${esc(p.name[0].toUpperCase())}</span><b>${esc(p.name)}${p.seat === v.you ? ' <span class="muted">(you)</span>' : ''}</b>${team}</li>`
+        ? `<li class="seat-row filled"><span class="avatar" style="--c:${SIDE_COLORS[v.teams ? i % 2 : i]}">${esc(p.name[0].toUpperCase())}</span><b>${esc(p.name)}${p.bot ? ' 🤖' : ''}${p.seat === v.you ? ' <span class="muted">(you)</span>' : ''}</b>${team}</li>`
         : `<li class="seat-row"><span class="avatar empty">?</span><span class="muted">Open seat</span>${team}</li>`;
     }).join('');
     return `
@@ -584,7 +716,8 @@ function mountGame(id) {
         <div class="invite-box"><input readonly value="${esc(link)}" id="invite-link"><button class="btn primary" id="copy-invite">Copy</button>
           ${navigator.share ? '<button class="btn ghost" id="share-invite">Share</button>' : ''}</div>
         <ul class="seats">${seats}</ul>
-        ${v.numPlayers === 4 ? '<p class="hint">Seats 1 &amp; 3 play Team A against seats 2 &amp; 4 (Team B), in join order.</p>' : ''}
+        <button class="btn" id="fill-bots">🤖 Fill empty seats with bots</button>
+        ${v.teams ? '<p class="hint">Seats 1 &amp; 3 play Team A against seats 2 &amp; 4 (Team B), in join order.</p>' : ''}
       </div>`;
   }
 
@@ -598,8 +731,13 @@ function mountGame(id) {
       const waiting = v.players.filter((p) => !p.discarded).map((p) => esc(p.name));
       return `Waiting for ${waiting.join(', ')} to discard`;
     }
+    if (v.phase === 'show') return 'Counting the hands…';
     if (v.phase === 'pegging') {
+      if (v.players.every((p) => p.cardCount === 0)) return 'That’s every card. Counting the hands…';
       if (v.yourTurn) return `Your play. The count is <b>${v.pegging.count}</b>`;
+      if (v.pegging.turn === v.you) {
+        return v.legal.length === 1 ? `Your only card, ${cardText(v.legal[0])}, plays itself…` : 'You can’t play. Go!';
+      }
       return `Waiting for ${esc(name(v.pegging.turn))} to play`;
     }
     return '';
@@ -607,7 +745,7 @@ function mountGame(id) {
 
   function seatHTML(v, p) {
     const color = SIDE_COLORS[p.side];
-    const team = v.numPlayers === 4 ? `<span class="team" style="--c:${color}">${v.you !== null && p.side === v.players[v.you].side ? 'Partner' : 'Opponent'}</span>` : '';
+    const team = v.teams ? `<span class="team" style="--c:${color}">${v.you !== null && p.side === v.players[v.you].side ? 'Partner' : 'Opponent'}</span>` : '';
     let note = '';
     if (v.status === 'playing') {
       if (v.phase === 'discard') note = p.discarded ? '✓ Ready' : 'Choosing…';
@@ -616,7 +754,7 @@ function mountGame(id) {
     const backs = Array.from({ length: p.cardCount }, () => backHTML('xs')).join('');
     return `<div class="seat ${p.isTurn ? 'turn' : ''}" style="--c:${color}">
       <div class="seat-head"><span class="avatar" style="--c:${color}">${esc(p.name[0].toUpperCase())}</span>
-        <div class="seat-name"><b>${esc(p.name)}</b>${team}</div>
+        <div class="seat-name"><b>${esc(p.name)}${p.bot ? ' <span class="bot-tag">BOT</span>' : ''}</b>${team}</div>
         ${v.dealer === p.seat ? '<span class="dealer" title="Dealer">D</span>' : ''}</div>
       <div class="seat-cards">${backs || '<span class="muted small">No cards</span>'}</div>
       <div class="seat-note">${note}</div></div>`;
@@ -747,6 +885,8 @@ function mountGame(id) {
     if (pl) pl.onclick = () => act('play', { card: G.selected[0] });
     const ci = $('#copy-invite');
     if (ci) ci.onclick = () => copy(`${location.origin}/g/${id}`, 'Invite link copied');
+    const fb = $('#fill-bots');
+    if (fb) fb.onclick = () => act('bots');
     const si = $('#share-invite');
     if (si) si.onclick = () => navigator.share({ title: 'Join my cribbage game', url: `${location.origin}/g/${id}` }).catch(() => {});
 
@@ -774,17 +914,28 @@ function mountGame(id) {
   }
 
   const KIND_LABEL = { fifteen: 'Fifteen', pair: 'Pair', run: 'Run', flush: 'Flush', nobs: 'Nobs' };
-  function lastHandHTML(v) {
+  function itemLabel(i) {
+    return `${KIND_LABEL[i.kind] || i.kind}${i.kind === 'run' ? ` of ${i.cards.length}` : ''}`;
+  }
+
+  // `counting` renders hands un-scored, ready for countThrough() to walk through them.
+  function lastHandHTML(v, counting = false) {
     const L = v.lastHand;
-    return `<div class="last">
+    return `<div class="last ${counting ? 'counting' : ''}">
       <div class="last-head"><span>Hand ${L.handNo} · starter</span>${cardHTML(L.starter, { cls: 'xs-face' })}</div>
-      ${L.shows.map((s) => {
+      ${L.shows.map((s, k) => {
         const p = v.players[s.seat];
         const who = s.crib ? `${s.seat === v.you ? 'Your' : `${esc(p.name)}’s`} crib` : s.seat === v.you ? 'Your hand' : esc(p.name);
-        return `<div class="show" style="--c:${SIDE_COLORS[p.side]}">
-          <div class="show-head"><b>${who}</b><span class="show-total">${s.total}</span></div>
-          <div class="show-cards">${sortCards(s.cards).map((c) => cardHTML(c, { cls: 'xs-face' })).join('')}<span class="plus">+</span>${cardHTML(L.starter, { cls: 'xs-face dim' })}</div>
-          ${s.items.length ? `<ul class="items">${s.items.map((i) => `<li><span>${KIND_LABEL[i.kind] || i.kind}${i.kind === 'run' ? ` of ${i.cards.length}` : ''}</span><span class="minis">${miniCards(sortCards(i.cards))}</span><b>${i.points}</b></li>`).join('')}</ul>` : '<p class="muted small">Nineteen. Nothing.</p>'}
+        return `<div class="show" style="--c:${SIDE_COLORS[p.side]};--k:${k}" data-total="${s.total}">
+          <div class="show-head"><b>${who}</b><span class="say" aria-live="polite"></span><span class="show-total">${counting ? '' : s.total}</span></div>
+          <div class="show-cards">${sortCards(s.cards).map((c) => cardHTML(c, { cls: 'xs-face' })).join('')}<span class="plus">+</span>${cardHTML(L.starter, { cls: 'xs-face dim starter-card' })}</div>
+          ${s.items.length
+            ? `<ul class="items">${s.items.map((i) => {
+              // Nobs scores because the jack matches the starter's suit, so light both.
+              const lit = i.kind === 'nobs' ? [...i.cards, L.starter] : i.cards;
+              return `<li tabindex="0" data-cards="${lit.join(',')}" data-points="${i.points}" data-label="${esc(itemLabel(i))}"><span>${itemLabel(i)}</span><span class="minis">${miniCards(sortCards(i.cards))}</span><b>${i.points}</b></li>`;
+            }).join('')}</ul>`
+            : '<p class="muted small nineteen">Nineteen. Nothing.</p>'}
         </div>`;
       }).join('')}
     </div>`;
@@ -801,15 +952,22 @@ function mountGame(id) {
       const skunk = worst < 61 ? 'Double skunk!' : worst < 91 ? 'Skunk!' : '';
       if (ov.dataset.state === `over-${v.version}`) return;
       ov.dataset.state = `over-${v.version}`;
+      // Pegging out while hands are being counted ends the game mid-count; show that count.
+      const endedInShow = v.lastHand && v.lastHand.handNo === v.handNo;
       ov.innerHTML = `<div class="modal-bg"><div class="modal panel over">
         <div class="trophy">${won ? '🏆' : '♣'}</div>
         <h2>${won ? 'You won!' : `${esc(sideLabel(v, v.winner))} won`}</h2>
         ${skunk ? `<p class="skunk">${skunk}</p>` : ''}
         <div class="final">${v.scores.map((s, i) => `<div style="--c:${SIDE_COLORS[i]}"><span>${esc(sideLabel(v, i))}</span><b>${s}</b></div>`).join('')}</div>
+        ${endedInShow ? `<h3 class="final-count">How the last hand was counted</h3>${lastHandHTML(v, true)}` : ''}
         <div class="modal-actions">
           ${v.you !== null ? `<button class="btn primary big" id="rematch">${v.nextGameId ? 'Go to rematch' : 'Rematch'}</button>` : ''}
           <button class="btn ghost" id="close-ov">View table</button></div></div></div>`;
-      $('#close-ov').onclick = () => (ov.innerHTML = '');
+      const finalCount = endedInShow ? countThrough($('.last', ov)) : null;
+      $('#close-ov').onclick = () => {
+        finalCount?.stop();
+        ov.innerHTML = '';
+      };
       const r = $('#rematch');
       if (r) {
         r.onclick = async () => {
@@ -829,9 +987,14 @@ function mountGame(id) {
       ov.dataset.state = `hand-${v.lastHand.handNo}`;
       ov.innerHTML = `<div class="modal-bg"><div class="modal panel">
         <h2>Hand ${v.lastHand.handNo} results</h2>
-        ${lastHandHTML(v)}
-        <div class="modal-actions"><button class="btn primary big" id="close-ov">On to hand ${v.handNo}</button></div></div></div>`;
+        ${lastHandHTML(v, true)}
+        <div class="modal-actions">
+          <button class="btn ghost" id="skip-count">Skip counting</button>
+          <button class="btn primary big" id="close-ov">On to hand ${v.lastHand.handNo + 1}</button></div></div></div>`;
+      const counter = countThrough($('.last', ov), () => $('#skip-count')?.remove());
+      $('#skip-count').onclick = () => counter.finish();
       $('#close-ov').onclick = () => {
+        counter.stop();
         local.write((d) => (d.seenHands[id] = v.lastHand.handNo));
         ov.innerHTML = '';
       };
@@ -845,6 +1008,11 @@ function mountGame(id) {
   // --- live updates ----------------------------------------------------------
   let es;
   function connect() {
+    if (LOCAL) {
+      const unsub = LOCAL.subscribe(id, () => refresh());
+      es = { close: unsub };
+      return;
+    }
     es = new EventSource(`/api/games/${id}/events`);
     es.addEventListener('update', (e) => {
       const { version } = JSON.parse(e.data);
@@ -869,4 +1037,5 @@ function mountGame(id) {
   };
 }
 
+if (!LOCAL) registerServiceWorker();
 route();
