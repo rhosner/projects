@@ -372,6 +372,24 @@ h2 { font-size: 20px; margin: 0 0 14px; }
 .items .mini { font-size: 11px; padding: 1px 4px; }
 .items b { color: var(--text); }
 
+/* ---------- push ---------- */
+.push-banner {
+  display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 16px;
+  background: linear-gradient(135deg, rgba(62,224,161,.14), rgba(43,182,214,.10));
+  border: 1px solid rgba(62,224,161,.3); animation: rise .35s ease both;
+}
+.pb-icon { font-size: 22px; }
+.pb-text { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.pb-text span { font-size: 13px; color: var(--muted); }
+.bell-on { color: var(--accent); border-color: rgba(62,224,161,.4); }
+.transfer { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }
+.transfer summary { cursor: pointer; color: var(--muted); font-size: 14px; font-weight: 500; }
+.transfer[open] summary { color: var(--text); margin-bottom: 8px; }
+.transfer .invite-box { margin: 10px 0 0; }
+.steps { padding-left: 20px; display: grid; gap: 14px; line-height: 1.45; }
+.steps .btn { margin-top: 8px; display: flex; }
+.share-glyph { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: var(--panel-2); font-size: 12px; }
+
 /* ---------- modals ---------- */
 .modal-bg { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: rgba(2, 8, 6, .65); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); animation: fade .25s ease both; }
 .modal { width: min(520px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; animation: rise .35s cubic-bezier(.2, 1.2, .5, 1) both; background: linear-gradient(180deg, #13241d, #0c1813); }
@@ -421,6 +439,9 @@ h2 { font-size: 20px; margin: 0 0 14px; }
   .pile-card { margin-left: -22px; }
   .hand-card { --card-w: 62px; margin: 0 -6px; }
   .score-chip { padding: 6px 10px; }
+  .push-banner { flex-wrap: wrap; }
+  .push-banner .pb-text { flex-basis: calc(100% - 80px); }
+  .push-banner #pb-on { flex: 1; }
   .score-chip .sname { max-width: 110px; font-size: 13px; }
   .score-chip .sval { font-size: 20px; }
   .board-wrap { padding: 6px 6px 2px; }

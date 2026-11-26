@@ -21,6 +21,7 @@ export function openStore(path) {
     'INSERT INTO games (id, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at',
   );
   return {
+    db,
     get(id) {
       const row = getStmt.get(id);
       return row ? JSON.parse(row.data) : null;

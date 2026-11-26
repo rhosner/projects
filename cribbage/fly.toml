@@ -8,6 +8,8 @@ primary_region = "ord"
 [env]
   PORT = "8080"
   DB_PATH = "/data/cribbage.db"
+  # Contact address push services can reach if your app misbehaves. Change this.
+  VAPID_SUBJECT = "mailto:change-me@example.com"
 
 [mounts]
   source = "crib_data"
