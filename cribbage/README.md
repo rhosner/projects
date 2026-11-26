@@ -8,6 +8,14 @@ Turn-based cribbage for 2–4 friends. Every game is saved on the server, so any
 
 Scoring is automatic: fifteens, pairs, runs, flushes (crib flushes need all 5 cards), nobs, his heels, go, last card and 31. First to 121 wins, and skunks are shown.
 
+## Bots
+
+Short a player? Tap **Play bots right now** on the home page, or **Fill empty seats with bots** in a lobby. Bots play their own turns on the server after a short pause (`BOT_DELAY_MS`, default 900). The bot picks its discard by averaging every possible starter card and pegs to take points and avoid giving them away. It beats random play almost every time, but it doesn't count cards or model opponents, so a decent player should beat it often.
+
+### Demo with no server
+
+`npm run demo` builds `demo/dist/`: the same app running entirely in the browser against bots (games saved in localStorage). Serve that folder from any static host, such as GitHub Pages, to try the game without deploying the server. There's no multiplayer or push in the demo.
+
 ## How playing works
 
 1. Create a game and copy the invite link into your group chat.
@@ -71,8 +79,10 @@ Back up by copying `cribbage.db`. Each game is one JSON row in the `games` table
 src/engine.js   rules, scoring, turn order, per-player views (pure, tested)
 src/server.js   HTTP API, SSE live updates, static files (no framework)
 src/store.js    SQLite persistence
+src/bot.js      bot discard and pegging choices (shared with the demo)
 src/push.js     Web Push: VAPID keys, subscriptions, who gets notified
 public/sw.js    service worker that shows notifications
+demo/           in-browser backend + build script for the serverless demo
 public/         vanilla JS frontend, no build step
 test/           node:test suites
 ```

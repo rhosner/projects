@@ -13,7 +13,7 @@ let proc;
 before(async () => {
   const dir = mkdtempSync(join(tmpdir(), 'crib-'));
   proc = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'src/server.js'], {
-    env: { ...process.env, PORT: String(PORT), DB_PATH: join(dir, 't.db') },
+    env: { ...process.env, PORT: String(PORT), DB_PATH: join(dir, 't.db'), BOT_DELAY_MS: '10' },
     stdio: 'pipe',
   });
   for (let i = 0; i < 50; i++) {
@@ -34,6 +34,26 @@ async function call(path, { method = 'GET', body, token } = {}) {
   });
   return { status: res.status, data: await res.json() };
 }
+
+test('bots fill seats and play their own turns', async () => {
+  const created = await call('/api/games', { method: 'POST', body: { name: 'Sol', numPlayers: 3 } });
+  const { id, token } = created.data;
+  assert.equal((await call(`/api/games/${id}/bots`, { method: 'POST' })).status, 403, 'needs a seat');
+  const r = await call(`/api/games/${id}/bots`, { method: 'POST', token });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.status, 'playing');
+  assert.deepEqual(r.data.players.map((p) => p.bot), [false, true, true]);
+  // Bots discard by themselves; afterwards only the human is still holding 5 cards.
+  let v;
+  for (let i = 0; i < 50; i++) {
+    await new Promise((res) => setTimeout(res, 50));
+    v = (await call(`/api/games/${id}`, { token })).data;
+    if (v.players[1].discarded && v.players[2].discarded) break;
+  }
+  assert.ok(v.players[1].discarded && v.players[2].discarded, 'bots discarded');
+  assert.equal(v.hand.length, 5);
+  assert.equal(v.yourTurn, true);
+});
 
 test('4-player game over HTTP, with auth checks and rematch', async () => {
   const created = await call('/api/games', { method: 'POST', body: { name: 'Ann', numPlayers: 4 } });

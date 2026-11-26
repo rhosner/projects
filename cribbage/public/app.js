@@ -75,7 +75,12 @@ function importLink(text) {
 // ---------------------------------------------------------------------------
 // API
 // ---------------------------------------------------------------------------
+// The demo build sets window.CRIB_TRANSPORT to an in-browser backend
+// ({ api, subscribe }); the real app talks to the server.
+const LOCAL = window.CRIB_TRANSPORT || null;
+
 async function api(path, { method = 'GET', body, gameId } = {}) {
+  if (LOCAL) return LOCAL.api(path, { method, body, token: gameId && local.token(gameId) });
   const headers = { 'Content-Type': 'application/json' };
   const token = gameId && local.token(gameId);
   if (token) headers['X-Player-Token'] = token;
@@ -110,10 +115,18 @@ async function copy(text, label = 'Copied') {
 // Router
 // ---------------------------------------------------------------------------
 let teardown = () => {};
+let memPath = '/'; // the demo routes in memory: its frame doesn't support URL paths
+const currentPath = () => (LOCAL ? memPath : location.pathname);
 function route() {
   teardown();
   teardown = () => {};
   document.title = 'Cribbage';
+  if (LOCAL) {
+    const m = currentPath().match(/^\/g\/([a-z0-9]+)/);
+    if (m) teardown = mountGame(m[1]);
+    else renderHome();
+    return;
+  }
   const m = location.pathname.match(/^\/g\/([a-z0-9]+)/);
   if (m) {
     // Device links carry the token in the hash so it never hits server logs.
@@ -133,11 +146,16 @@ function route() {
   }
 }
 function go(path) {
+  if (LOCAL) {
+    memPath = path;
+    route();
+    window.scrollTo(0, 0);
+    return;
+  }
   history.pushState(null, '', path);
-  registerServiceWorker();
-route();
+  route();
 }
-window.addEventListener('popstate', route);
+if (!LOCAL) window.addEventListener('popstate', route);
 document.addEventListener('click', (e) => {
   const a = e.target.closest('a[data-link]');
   if (a && !e.metaKey && !e.ctrlKey) {
@@ -172,12 +190,14 @@ function renderHome() {
             </div>
             <small class="hint" id="players-hint">Classic head-to-head. 6 cards each, 2 to the crib.</small>
           </div>
-          <button class="btn primary big" type="submit">Create game &amp; get invite link</button>
+          ${LOCAL ? '' : '<button class="btn primary big" type="submit">Create game &amp; get invite link</button>'}
+          <button class="btn ${LOCAL ? 'primary' : ''} big" type="button" id="vs-bot">🤖 ${LOCAL ? 'Start a game' : 'Play bots right now'}</button>
+          <small class="hint center-hint">${LOCAL ? 'Every other seat is a bot.' : 'Fills every other seat with a bot.'}</small>
         </form>
         <section class="panel games">
           <h2>Your games</h2>
           <div id="game-list" class="game-list"><p class="muted">Loading…</p></div>
-          <details class="transfer" ${isStandalone() && !Object.keys(data.games).length ? 'open' : ''}>
+          <details class="transfer ${LOCAL ? 'hidden' : ''}" ${isStandalone() && !Object.keys(data.games).length ? 'open' : ''}>
             <summary>Move your games to another device</summary>
             <p class="hint">Copy a link on the device that has your games, then paste it here on the new one. It signs in as you, so don't send it to anyone else.</p>
             <div class="invite-box">
@@ -201,8 +221,26 @@ function renderHome() {
       $('#players-hint').textContent = hints[players];
     };
   }
+  async function create(withBots) {
+    const form = $('#create');
+    const name = form.name.value.trim();
+    if (!name) return form.name.focus();
+    form.querySelectorAll('button').forEach((b) => (b.disabled = true));
+    try {
+      const { id, token } = await api('/games', { method: 'POST', body: { name, numPlayers: players } });
+      local.remember(id, token);
+      local.write((d) => (d.name = name));
+      if (withBots) await api(`/games/${id}/bots`, { method: 'POST', gameId: id });
+      go(`/g/${id}`);
+    } catch (err) {
+      toast(err.message);
+      form.querySelectorAll('button').forEach((b) => (b.disabled = false));
+    }
+  }
+  $('#vs-bot').onclick = () => create(true);
   $('#create').onsubmit = async (e) => {
     e.preventDefault();
+    if (LOCAL) return create(true);
     const name = e.target.name.value.trim();
     const btn = e.target.querySelector('button[type=submit]');
     btn.disabled = true;
@@ -246,7 +284,7 @@ async function loadGameList() {
     btn.onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      if (confirm('Remove this game from your list? (It stays on the server; you can rejoin with your device link.)')) {
+      if (LOCAL || confirm('Remove this game from your list? (It stays on the server; you can rejoin with your device link.)')) {
         local.forget(btn.dataset.forget);
         loadGameList();
       }
@@ -344,7 +382,7 @@ function mountGame(id) {
 
   function notifyIfTurn(v) {
     document.title = v.yourTurn ? '● Your turn · Cribbage' : 'Cribbage';
-    if (v.you !== null && !G.pushSynced) {
+    if (v.you !== null && !G.pushSynced && !LOCAL) {
       G.pushSynced = true;
       syncPush();
     }
@@ -421,6 +459,7 @@ function mountGame(id) {
 
   function renderPushBanner(v) {
     const el = $('#push-banner');
+    if (LOCAL) return;
     const d = local.read();
     const avail = pushAvailability();
     const show = v.you !== null && v.status !== 'finished' && !pushOn() && d.push[id] !== 'off' && !d.pushDismissed[id]
@@ -480,16 +519,16 @@ function mountGame(id) {
   function renderTopbar(v) {
     const notifOn = pushOn();
     const avail = pushAvailability();
-    const showBell = v.you !== null && (avail === 'ready' || avail === 'ios-install');
+    const showBell = !LOCAL && v.you !== null && (avail === 'ready' || avail === 'ios-install');
     const meta = v.status === 'lobby' ? 'Lobby' : `Hand ${v.handNo} · ${esc(v.players[v.dealer].name)} deals`;
     $('#topbar').innerHTML = `${brand}
       <div class="top-meta">${meta}</div>
       <div class="top-actions">
         ${showBell ? `<button class="icon-btn ${notifOn ? 'bell-on' : ''}" id="notif" title="${notifOn ? 'Notifications on (tap to turn off)' : 'Turn on notifications'}" aria-pressed="${notifOn}">${notifOn ? '🔔' : '🔕'}</button>` : ''}
-        <button class="btn ghost" id="invite">Invite</button>
-        ${v.you !== null ? `<button class="btn ghost" id="device" title="Open this game as you on another device">Other device</button>` : ''}
+        ${LOCAL ? '<span class="pill">Demo · runs in your browser</span>' : '<button class="btn ghost" id="invite">Invite</button>'}
+        ${v.you !== null && !LOCAL ? `<button class="btn ghost" id="device" title="Open this game as you on another device">Other device</button>` : ''}
       </div>`;
-    $('#invite').onclick = () => copy(`${location.origin}/g/${id}`, 'Invite link copied');
+    if ($('#invite')) $('#invite').onclick = () => copy(`${location.origin}/g/${id}`, 'Invite link copied');
     const dev = $('#device');
     if (dev) {
       dev.onclick = () => {
@@ -574,7 +613,7 @@ function mountGame(id) {
       const p = v.players[i];
       const team = v.numPlayers === 4 ? `<span class="team" style="--c:${SIDE_COLORS[i % 2]}">Team ${i % 2 ? 'B' : 'A'}</span>` : '';
       return p
-        ? `<li class="seat-row filled"><span class="avatar" style="--c:${SIDE_COLORS[v.numPlayers === 4 ? i % 2 : i]}">${esc(p.name[0].toUpperCase())}</span><b>${esc(p.name)}${p.seat === v.you ? ' <span class="muted">(you)</span>' : ''}</b>${team}</li>`
+        ? `<li class="seat-row filled"><span class="avatar" style="--c:${SIDE_COLORS[v.numPlayers === 4 ? i % 2 : i]}">${esc(p.name[0].toUpperCase())}</span><b>${esc(p.name)}${p.bot ? ' 🤖' : ''}${p.seat === v.you ? ' <span class="muted">(you)</span>' : ''}</b>${team}</li>`
         : `<li class="seat-row"><span class="avatar empty">?</span><span class="muted">Open seat</span>${team}</li>`;
     }).join('');
     return `
@@ -584,6 +623,7 @@ function mountGame(id) {
         <div class="invite-box"><input readonly value="${esc(link)}" id="invite-link"><button class="btn primary" id="copy-invite">Copy</button>
           ${navigator.share ? '<button class="btn ghost" id="share-invite">Share</button>' : ''}</div>
         <ul class="seats">${seats}</ul>
+        <button class="btn" id="fill-bots">🤖 Fill empty seats with bots</button>
         ${v.numPlayers === 4 ? '<p class="hint">Seats 1 &amp; 3 play Team A against seats 2 &amp; 4 (Team B), in join order.</p>' : ''}
       </div>`;
   }
@@ -616,7 +656,7 @@ function mountGame(id) {
     const backs = Array.from({ length: p.cardCount }, () => backHTML('xs')).join('');
     return `<div class="seat ${p.isTurn ? 'turn' : ''}" style="--c:${color}">
       <div class="seat-head"><span class="avatar" style="--c:${color}">${esc(p.name[0].toUpperCase())}</span>
-        <div class="seat-name"><b>${esc(p.name)}</b>${team}</div>
+        <div class="seat-name"><b>${esc(p.name)}${p.bot ? ' <span class="bot-tag">BOT</span>' : ''}</b>${team}</div>
         ${v.dealer === p.seat ? '<span class="dealer" title="Dealer">D</span>' : ''}</div>
       <div class="seat-cards">${backs || '<span class="muted small">No cards</span>'}</div>
       <div class="seat-note">${note}</div></div>`;
@@ -747,6 +787,8 @@ function mountGame(id) {
     if (pl) pl.onclick = () => act('play', { card: G.selected[0] });
     const ci = $('#copy-invite');
     if (ci) ci.onclick = () => copy(`${location.origin}/g/${id}`, 'Invite link copied');
+    const fb = $('#fill-bots');
+    if (fb) fb.onclick = () => act('bots');
     const si = $('#share-invite');
     if (si) si.onclick = () => navigator.share({ title: 'Join my cribbage game', url: `${location.origin}/g/${id}` }).catch(() => {});
 
@@ -845,6 +887,11 @@ function mountGame(id) {
   // --- live updates ----------------------------------------------------------
   let es;
   function connect() {
+    if (LOCAL) {
+      const unsub = LOCAL.subscribe(id, () => refresh());
+      es = { close: unsub };
+      return;
+    }
     es = new EventSource(`/api/games/${id}/events`);
     es.addEventListener('update', (e) => {
       const { version } = JSON.parse(e.data);
@@ -869,4 +916,5 @@ function mountGame(id) {
   };
 }
 
+if (!LOCAL) registerServiceWorker();
 route();

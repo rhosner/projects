@@ -5,6 +5,7 @@ import { join, extname, normalize, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openStore } from './store.js';
 import { createPusher, turnNotifications } from './push.js';
+import { botMove, BOT_NAMES } from './bot.js';
 import { createGame, addPlayer, startGame, discard, play, viewFor, RuleError } from './engine.js';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -88,6 +89,32 @@ function save(game, before = null, actorSeat = null) {
   store.put(game);
   broadcast(game);
   if (before) pusher.notify(game, turnNotifications(before, game, actorSeat)).catch(() => {});
+  scheduleBots(game.id);
+}
+
+// --- bots ---------------------------------------------------------------------
+// Bots move on a short delay so humans can follow along. Each step reloads the
+// game, so a human move in between is never overwritten.
+const BOT_DELAY = Number(process.env.BOT_DELAY_MS ?? 900);
+const botTimers = new Map();
+function scheduleBots(id) {
+  if (botTimers.has(id)) return;
+  const game = store.get(id);
+  if (!game || !botMove(game)) return;
+  botTimers.set(id, setTimeout(() => {
+    botTimers.delete(id);
+    const g = store.get(id);
+    const move = g && botMove(g);
+    if (!move) return;
+    const before = structuredClone(g);
+    try {
+      if (move.type === 'discard') discard(g, move.seat, move.cards);
+      else play(g, move.seat, move.card);
+    } catch (err) {
+      return console.error('bot move failed', err);
+    }
+    save(g, before, move.seat);
+  }, BOT_DELAY));
 }
 
 function requireSeat(game, req) {
@@ -111,6 +138,7 @@ const routes = [
 
   ['GET', /^\/api\/games\/([a-z0-9]+)$/, async (req, res, [id]) => {
     const game = loadGame(id);
+    scheduleBots(id); // resumes bots after a server restart
     send(res, 200, viewFor(game, seatFor(game, req)));
   }],
 
@@ -164,6 +192,7 @@ const routes = [
       next.version = 1;
       store.put(next);
       pusher.notify(next, turnNotifications(lobby, next, seat)).catch(() => {});
+      scheduleBots(next.id);
       game.nextGameId = next.id;
       save(game);
     }
@@ -186,6 +215,20 @@ const routes = [
       subs?.delete(res);
       if (subs && !subs.size) subscribers.delete(id);
     });
+  }],
+
+  ['POST', /^\/api\/games\/([a-z0-9]+)\/bots$/, async (req, res, [id]) => {
+    const game = loadGame(id);
+    const seat = requireSeat(game, req);
+    if (game.status !== 'lobby') throw new HttpError(400, 'The game has already started');
+    const before = structuredClone(game);
+    const taken = new Set(game.players.map((p) => p.name.toLowerCase()));
+    const names = BOT_NAMES.filter((n) => !taken.has(n.toLowerCase()));
+    while (game.players.length < game.numPlayers) {
+      addPlayer(game, { id: randomUUID(), name: names.shift() ?? `Bot ${game.players.length}`, tokenHash: '', bot: true });
+    }
+    save(game, before, seat);
+    send(res, 200, viewFor(game, seat));
   }],
 
   ['GET', /^\/api\/push\/key$/, async (_req, res) => send(res, 200, { publicKey: pusher.publicKey })],

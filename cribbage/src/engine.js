@@ -1,7 +1,15 @@
 // Cribbage rules engine. Pure state transitions; the server owns persistence.
 // Cards are 2-char strings: rank (A23456789TJQK) + suit (SHDC), e.g. "TH" = 10 of hearts.
 
-import { randomInt } from 'node:crypto';
+// Unbiased random integer in [0, max) from Web Crypto (available in Node 22+ and browsers),
+// so this file runs unchanged on the server and in the in-browser demo.
+export function randomInt(max) {
+  const limit = Math.floor(0x100000000 / max) * max;
+  const buf = new Uint32Array(1);
+  do globalThis.crypto.getRandomValues(buf);
+  while (buf[0] >= limit);
+  return buf[0] % max;
+}
 
 export const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K'];
 export const SUITS = ['S', 'H', 'D', 'C'];
@@ -168,10 +176,10 @@ export function createGame({ id, numPlayers, autoPlay = true }) {
   };
 }
 
-export function addPlayer(state, { id, name, tokenHash }, rng = randomInt) {
+export function addPlayer(state, { id, name, tokenHash, bot = false }, rng = randomInt) {
   if (state.status !== 'lobby') throw new RuleError('This game has already started');
   if (state.players.length >= state.numPlayers) throw new RuleError('This game is full');
-  state.players.push({ id, name, tokenHash, joinedAt: Date.now() });
+  state.players.push({ id, name, tokenHash, bot, joinedAt: Date.now() });
   log(state, `${name} joined`);
   if (state.players.length === state.numPlayers) startGame(state, rng);
   return state.players.length - 1;
@@ -409,6 +417,7 @@ export function viewFor(state, seat) {
     players: state.players.map((pl, i) => ({
       seat: i,
       name: pl.name,
+      bot: !!pl.bot,
       side: sideOf(state, i),
       cardCount: state.status === 'lobby' ? 0 : currentHand(state, i)?.length ?? 0,
       discarded: !!state.discarded[i],
