@@ -1,0 +1,26 @@
+# Fly.io config. Run `fly launch --no-deploy` first to pick an app name and region,
+# then `fly volumes create crib_data --size 1` and `fly deploy`.
+app = "cribbage-change-me"
+primary_region = "ord"
+
+[build]
+
+[env]
+  PORT = "8080"
+  DB_PATH = "/data/cribbage.db"
+
+[mounts]
+  source = "crib_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1
