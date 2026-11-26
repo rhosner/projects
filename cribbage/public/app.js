@@ -309,6 +309,108 @@ function gameRow(v) {
 }
 
 // ---------------------------------------------------------------------------
+// Scored-hand highlighting: light up the cards behind one scoring line.
+// ---------------------------------------------------------------------------
+function highlight(show, li) {
+  show.querySelectorAll('.items li.active').forEach((x) => x.classList.remove('active'));
+  show.querySelectorAll('.show-cards .card.lit').forEach((x) => x.classList.remove('lit'));
+  show.classList.toggle('highlighting', !!li);
+  if (!li) return;
+  li.classList.add('active');
+  const cards = li.dataset.cards.split(',');
+  show.querySelectorAll('.show-cards .card').forEach((c) => c.classList.toggle('lit', cards.includes(c.dataset.card)));
+}
+
+// Hover, focus or tap a scoring line to see which cards made it.
+const lineOf = (e) => e.target.closest?.('.show:not(.pending) .items li');
+document.addEventListener('mouseover', (e) => {
+  const li = lineOf(e);
+  if (li && !li.closest('.counting-now')) highlight(li.closest('.show'), li);
+});
+document.addEventListener('mouseout', (e) => {
+  const li = lineOf(e);
+  if (li && !li.contains(e.relatedTarget) && !li.closest('.counting-now')) highlight(li.closest('.show'), null);
+});
+document.addEventListener('focusin', (e) => {
+  const li = lineOf(e);
+  if (li && !li.closest('.counting-now')) highlight(li.closest('.show'), li);
+});
+document.addEventListener('click', (e) => {
+  const li = lineOf(e);
+  if (!li || li.closest('.counting-now')) return;
+  const show = li.closest('.show');
+  highlight(show, li.classList.contains('active') ? null : li); // tap again to clear (touch screens)
+});
+
+/**
+ * Count each hand out loud, one scoring line at a time: light its cards, add its
+ * points to a running total, then move on to the next hand. Returns controls to
+ * finish instantly (Skip) or stop (modal closed).
+ */
+function countThrough(root, onDone) {
+  const STEP = 750;
+  const BETWEEN = 600;
+  const shows = [...root.querySelectorAll('.show')];
+  const timers = [];
+  let stopped = false;
+  shows.forEach((sh) => sh.classList.add('pending'));
+
+  const settleShow = (sh) => {
+    highlight(sh, null);
+    sh.classList.remove('pending', 'counting-now');
+    sh.classList.add('counted');
+    sh.querySelectorAll('.items li').forEach((li) => li.classList.add('shown'));
+    sh.querySelector('.show-total').textContent = sh.dataset.total;
+    sh.querySelector('.say').textContent = '';
+  };
+  const finish = () => {
+    if (stopped) return;
+    stopped = true;
+    timers.forEach(clearTimeout);
+    shows.forEach(settleShow);
+    root.classList.remove('counting');
+    onDone?.();
+  };
+
+  let t = 400;
+  const at = (fn) => timers.push(setTimeout(() => !stopped && root.isConnected && fn(), t));
+  for (const sh of shows) {
+    const lines = [...sh.querySelectorAll('.items li')];
+    at(() => {
+      sh.classList.remove('pending');
+      sh.classList.add('counting-now');
+      sh.querySelector('.show-total').textContent = '0';
+      sh.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+    t += 350;
+    let running = 0;
+    for (const li of lines) {
+      running += Number(li.dataset.points);
+      const total = running;
+      at(() => {
+        li.classList.add('shown');
+        highlight(sh, li);
+        sh.querySelector('.say').textContent = `${li.dataset.label} · ${total}`;
+        const el = sh.querySelector('.show-total');
+        el.textContent = total;
+        el.classList.remove('tick');
+        void el.offsetWidth; // restart the pop animation
+        el.classList.add('tick');
+      });
+      t += STEP;
+    }
+    if (!lines.length) {
+      at(() => (sh.querySelector('.say').textContent = 'Nineteen'));
+      t += STEP;
+    }
+    at(() => settleShow(sh));
+    t += BETWEEN;
+  }
+  at(finish);
+  return { finish, stop: () => { stopped = true; timers.forEach(clearTimeout); } };
+}
+
+// ---------------------------------------------------------------------------
 // Game screen
 // ---------------------------------------------------------------------------
 function mountGame(id) {
@@ -812,17 +914,28 @@ function mountGame(id) {
   }
 
   const KIND_LABEL = { fifteen: 'Fifteen', pair: 'Pair', run: 'Run', flush: 'Flush', nobs: 'Nobs' };
-  function lastHandHTML(v, reveal = false) {
+  function itemLabel(i) {
+    return `${KIND_LABEL[i.kind] || i.kind}${i.kind === 'run' ? ` of ${i.cards.length}` : ''}`;
+  }
+
+  // `counting` renders hands un-scored, ready for countThrough() to walk through them.
+  function lastHandHTML(v, counting = false) {
     const L = v.lastHand;
-    return `<div class="last ${reveal ? 'reveal' : ''}">
+    return `<div class="last ${counting ? 'counting' : ''}">
       <div class="last-head"><span>Hand ${L.handNo} · starter</span>${cardHTML(L.starter, { cls: 'xs-face' })}</div>
       ${L.shows.map((s, k) => {
         const p = v.players[s.seat];
         const who = s.crib ? `${s.seat === v.you ? 'Your' : `${esc(p.name)}’s`} crib` : s.seat === v.you ? 'Your hand' : esc(p.name);
-        return `<div class="show" style="--c:${SIDE_COLORS[p.side]};--k:${k}">
-          <div class="show-head"><b>${who}</b><span class="show-total">${s.total}</span></div>
-          <div class="show-cards">${sortCards(s.cards).map((c) => cardHTML(c, { cls: 'xs-face' })).join('')}<span class="plus">+</span>${cardHTML(L.starter, { cls: 'xs-face dim' })}</div>
-          ${s.items.length ? `<ul class="items">${s.items.map((i) => `<li><span>${KIND_LABEL[i.kind] || i.kind}${i.kind === 'run' ? ` of ${i.cards.length}` : ''}</span><span class="minis">${miniCards(sortCards(i.cards))}</span><b>${i.points}</b></li>`).join('')}</ul>` : '<p class="muted small">Nineteen. Nothing.</p>'}
+        return `<div class="show" style="--c:${SIDE_COLORS[p.side]};--k:${k}" data-total="${s.total}">
+          <div class="show-head"><b>${who}</b><span class="say" aria-live="polite"></span><span class="show-total">${counting ? '' : s.total}</span></div>
+          <div class="show-cards">${sortCards(s.cards).map((c) => cardHTML(c, { cls: 'xs-face' })).join('')}<span class="plus">+</span>${cardHTML(L.starter, { cls: 'xs-face dim starter-card' })}</div>
+          ${s.items.length
+            ? `<ul class="items">${s.items.map((i) => {
+              // Nobs scores because the jack matches the starter's suit, so light both.
+              const lit = i.kind === 'nobs' ? [...i.cards, L.starter] : i.cards;
+              return `<li tabindex="0" data-cards="${lit.join(',')}" data-points="${i.points}" data-label="${esc(itemLabel(i))}"><span>${itemLabel(i)}</span><span class="minis">${miniCards(sortCards(i.cards))}</span><b>${i.points}</b></li>`;
+            }).join('')}</ul>`
+            : '<p class="muted small nineteen">Nineteen. Nothing.</p>'}
         </div>`;
       }).join('')}
     </div>`;
@@ -839,15 +952,22 @@ function mountGame(id) {
       const skunk = worst < 61 ? 'Double skunk!' : worst < 91 ? 'Skunk!' : '';
       if (ov.dataset.state === `over-${v.version}`) return;
       ov.dataset.state = `over-${v.version}`;
+      // Pegging out while hands are being counted ends the game mid-count; show that count.
+      const endedInShow = v.lastHand && v.lastHand.handNo === v.handNo;
       ov.innerHTML = `<div class="modal-bg"><div class="modal panel over">
         <div class="trophy">${won ? '🏆' : '♣'}</div>
         <h2>${won ? 'You won!' : `${esc(sideLabel(v, v.winner))} won`}</h2>
         ${skunk ? `<p class="skunk">${skunk}</p>` : ''}
         <div class="final">${v.scores.map((s, i) => `<div style="--c:${SIDE_COLORS[i]}"><span>${esc(sideLabel(v, i))}</span><b>${s}</b></div>`).join('')}</div>
+        ${endedInShow ? `<h3 class="final-count">How the last hand was counted</h3>${lastHandHTML(v, true)}` : ''}
         <div class="modal-actions">
           ${v.you !== null ? `<button class="btn primary big" id="rematch">${v.nextGameId ? 'Go to rematch' : 'Rematch'}</button>` : ''}
           <button class="btn ghost" id="close-ov">View table</button></div></div></div>`;
-      $('#close-ov').onclick = () => (ov.innerHTML = '');
+      const finalCount = endedInShow ? countThrough($('.last', ov)) : null;
+      $('#close-ov').onclick = () => {
+        finalCount?.stop();
+        ov.innerHTML = '';
+      };
       const r = $('#rematch');
       if (r) {
         r.onclick = async () => {
@@ -868,8 +988,13 @@ function mountGame(id) {
       ov.innerHTML = `<div class="modal-bg"><div class="modal panel">
         <h2>Hand ${v.lastHand.handNo} results</h2>
         ${lastHandHTML(v, true)}
-        <div class="modal-actions"><button class="btn primary big" id="close-ov">On to hand ${v.lastHand.handNo + 1}</button></div></div></div>`;
+        <div class="modal-actions">
+          <button class="btn ghost" id="skip-count">Skip counting</button>
+          <button class="btn primary big" id="close-ov">On to hand ${v.lastHand.handNo + 1}</button></div></div></div>`;
+      const counter = countThrough($('.last', ov), () => $('#skip-count')?.remove());
+      $('#skip-count').onclick = () => counter.finish();
       $('#close-ov').onclick = () => {
+        counter.stop();
         local.write((d) => (d.seenHands[id] = v.lastHand.handNo));
         ov.innerHTML = '';
       };

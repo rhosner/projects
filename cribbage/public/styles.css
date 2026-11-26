@@ -401,10 +401,22 @@ h2 { font-size: 20px; margin: 0 0 14px; }
 .steps .btn { margin-top: 8px; display: flex; }
 .share-glyph { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: var(--panel-2); font-size: 12px; }
 
-/* Hands are revealed one at a time, in counting order, when results first appear. */
-.last.reveal .show { animation: deal-in .5s calc(.35s + var(--k) * .7s) cubic-bezier(.2, 1.2, .5, 1) both; }
-.last.reveal .show-total { animation: pop .45s calc(.6s + var(--k) * .7s) cubic-bezier(.3, 1.8, .5, 1) both; }
-.last.reveal ~ .modal-actions { animation: fade .4s calc(.5s + 3 * .7s) both; }
+/* Scored hands: hover/tap a line to light its cards; the results screen counts them out. */
+.show-cards .card { transition: opacity .2s, translate .2s, box-shadow .2s; }
+.show.highlighting .show-cards .card:not(.lit) { opacity: .28; }
+.show-cards .card.lit { opacity: 1; translate: 0 -5px; box-shadow: 0 0 0 2px var(--c), 0 8px 18px -6px var(--c); }
+.items li { cursor: default; border-radius: 6px; padding: 2px 4px; margin: 0 -4px; transition: background .15s, opacity .25s; }
+.items li:hover, .items li.active { background: color-mix(in srgb, var(--c) 16%, transparent); color: var(--text); }
+.items li:focus-visible { outline: 2px solid var(--c); outline-offset: 1px; }
+.say { margin-left: auto; margin-right: 10px; font-size: 12.5px; font-weight: 600; color: var(--c); white-space: nowrap; }
+.show-head { gap: 8px; }
+.show-total.tick { animation: pop .35s cubic-bezier(.3, 1.8, .5, 1); }
+/* Counting state: hands wait dimmed, lines appear as they're counted. */
+.last.counting .show.pending { opacity: .35; }
+.last.counting .show.pending .show-total::after { content: '·'; color: var(--muted); }
+.last.counting .items li:not(.shown) { opacity: 0; }
+.show.counting-now { box-shadow: 0 0 0 1px var(--c), 0 0 30px -12px var(--c); }
+.show { transition: opacity .3s, box-shadow .3s; }
 
 /* ---------- modals ---------- */
 .modal-bg { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: rgba(2, 8, 6, .65); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); animation: fade .25s ease both; }
@@ -416,6 +428,8 @@ h2 { font-size: 20px; margin: 0 0 14px; }
 .skunk { color: var(--gold); font-weight: 700; margin: 0; }
 .final { display: grid; gap: 8px; margin-top: 18px; }
 .final div { display: flex; justify-content: space-between; padding: 10px 14px; border-radius: 12px; background: rgba(0,0,0,.2); border-left: 3px solid var(--c); }
+.final-count { font-size: 15px; text-align: left; margin: 22px 0 10px; font-family: var(--serif); }
+.over .last { text-align: left; }
 .final b { font-family: var(--serif); font-size: 20px; color: var(--c); }
 
 /* ---------- motion ---------- */
