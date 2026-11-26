@@ -1,6 +1,9 @@
 import {
   SIDE_COLORS, esc, cardHTML, backHTML, miniCards, cardText, sortCards, timeAgo, mountBoard, updateBoard, boardRowsFor,
 } from './ui.js';
+import {
+  pushAvailability, ensureSubscription, currentSubscription, registerServiceWorker, isStandalone,
+} from './push-client.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
@@ -12,9 +15,9 @@ const KEY = 'cribbage.v1';
 const local = {
   read() {
     try {
-      return { name: '', games: {}, seenHands: {}, ...JSON.parse(localStorage.getItem(KEY) || '{}') };
+      return { name: '', games: {}, seenHands: {}, push: {}, pushDismissed: {}, ...JSON.parse(localStorage.getItem(KEY) || '{}') };
     } catch {
-      return { name: '', games: {}, seenHands: {} };
+      return { name: '', games: {}, seenHands: {}, push: {}, pushDismissed: {} };
     }
   },
   write(fn) {
@@ -29,6 +32,45 @@ const local = {
   remember: (id, token) => local.write((d) => (d.games[id] = { token, addedAt: d.games[id]?.addedAt || Date.now() })),
   forget: (id) => local.write((d) => delete d.games[id]),
 };
+
+// A link that carries every seat this browser holds, for moving to another device
+// (or into an iPhone Home Screen app, which doesn't share storage with Safari).
+function allGamesLink() {
+  const d = local.read();
+  const games = Object.fromEntries(Object.entries(d.games).map(([id, g]) => [id, g.token]));
+  const bytes = new TextEncoder().encode(JSON.stringify({ n: d.name, g: games }));
+  const b64 = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return `${location.origin}/#i=${b64}`;
+}
+
+/** Accepts an all-games link (/#i=...) or a single-game personal link (/g/id#t=...). Returns games imported. */
+function importLink(text) {
+  let url;
+  try {
+    url = new URL(String(text).trim(), location.origin);
+  } catch {
+    return 0;
+  }
+  const hash = new URLSearchParams(url.hash.slice(1));
+  const single = url.pathname.match(/^\/g\/([a-z0-9]+)/);
+  if (single && hash.get('t')) {
+    local.remember(single[1], hash.get('t'));
+    return 1;
+  }
+  if (hash.get('i')) {
+    try {
+      const raw = atob(hash.get('i').replace(/-/g, '+').replace(/_/g, '/'));
+      const data = JSON.parse(new TextDecoder().decode(Uint8Array.from(raw, (c) => c.charCodeAt(0))));
+      const entries = Object.entries(data.g || {}).filter(([id, t]) => /^[a-z0-9]+$/.test(id) && typeof t === 'string');
+      for (const [id, token] of entries) local.remember(id, token);
+      if (data.n && !local.read().name) local.write((d) => (d.name = String(data.n).slice(0, 20)));
+      return entries.length;
+    } catch {
+      return 0;
+    }
+  }
+  return 0;
+}
 
 // ---------------------------------------------------------------------------
 // API
@@ -82,12 +124,18 @@ function route() {
     }
     teardown = mountGame(m[1]);
   } else {
+    if (location.hash.startsWith('#i=')) {
+      const n = importLink(location.href);
+      history.replaceState(null, '', '/');
+      if (n) setTimeout(() => toast(`Added ${n} game${n === 1 ? '' : 's'} to this device`, 'ok'), 50);
+    }
     renderHome();
   }
 }
 function go(path) {
   history.pushState(null, '', path);
-  route();
+  registerServiceWorker();
+route();
 }
 window.addEventListener('popstate', route);
 document.addEventListener('click', (e) => {
@@ -129,6 +177,14 @@ function renderHome() {
         <section class="panel games">
           <h2>Your games</h2>
           <div id="game-list" class="game-list"><p class="muted">Loading…</p></div>
+          <details class="transfer" ${isStandalone() && !Object.keys(data.games).length ? 'open' : ''}>
+            <summary>Move your games to another device</summary>
+            <p class="hint">Copy a link on the device that has your games, then paste it here on the new one. It signs in as you, so don't send it to anyone else.</p>
+            <div class="invite-box">
+              <button type="button" class="btn" id="copy-all" ${Object.keys(data.games).length ? '' : 'disabled'}>Copy my games link</button>
+            </div>
+            <form class="invite-box" id="paste-link"><input name="link" placeholder="Paste a link here" autocomplete="off"><button class="btn primary">Add</button></form>
+          </details>
         </section>
       </div>
     </div>`;
@@ -159,6 +215,14 @@ function renderHome() {
       toast(err.message);
       btn.disabled = false;
     }
+  };
+  $('#copy-all').onclick = () => copy(allGamesLink(), 'Link to all your games copied');
+  $('#paste-link').onsubmit = (e) => {
+    e.preventDefault();
+    const n = importLink(e.target.link.value);
+    if (!n) return toast("That doesn't look like a Cribbage personal link.");
+    toast(`Added ${n} game${n === 1 ? '' : 's'}`, 'ok');
+    renderHome();
   };
   loadGameList();
 }
@@ -228,7 +292,7 @@ function mountGame(id) {
     lastAnimatedPile: [],
     dealtKey: null,
     starterSeen: null,
-    wasTurn: false,
+    pushSynced: false,
     boardSides: 0,
     alive: true,
   };
@@ -238,6 +302,7 @@ function mountGame(id) {
       <header class="topbar" id="topbar">${brand}</header>
       <main class="layout">
         <section class="main-col">
+          <div id="push-banner"></div>
           <div class="scores" id="scores"></div>
           <div class="board-wrap" id="board"></div>
           <div id="table"><div class="loading"><div class="spinner"></div></div></div>
@@ -279,16 +344,104 @@ function mountGame(id) {
 
   function notifyIfTurn(v) {
     document.title = v.yourTurn ? '● Your turn · Cribbage' : 'Cribbage';
-    if (v.yourTurn && !G.wasTurn && document.hidden && 'Notification' in window && Notification.permission === 'granted') {
-      const others = v.players.filter((p) => p.seat !== v.you).map((p) => p.name).join(', ');
-      try {
-        new Notification('Your turn in cribbage', {
-          body: v.phase === 'discard' ? `New hand vs ${others}. Pick your crib cards.` : `Count is ${v.pegging?.count ?? 0}.`,
-          tag: `crib-${v.id}`,
-        });
-      } catch { /* some mobile browsers only allow notifications from a service worker */ }
+    if (v.you !== null && !G.pushSynced) {
+      G.pushSynced = true;
+      syncPush();
     }
-    G.wasTurn = v.yourTurn;
+  }
+
+  // --- push notifications ----------------------------------------------------
+  const pushOn = () =>
+    local.read().push[id] === 'on' && 'Notification' in window && Notification.permission === 'granted';
+
+  async function registerPush() {
+    const sub = await ensureSubscription();
+    await api(`/games/${id}/push`, { method: 'POST', body: { subscription: sub.toJSON() }, gameId: id });
+    local.write((d) => (d.push[id] = 'on'));
+  }
+
+  // Re-register on every visit: endpoints can rotate, and a device that already
+  // allowed notifications for one game gets them for its other games too.
+  async function syncPush() {
+    if (local.read().push[id] === 'off' || pushAvailability() !== 'ready' || Notification.permission !== 'granted') return;
+    try {
+      await registerPush();
+      if (G.alive) render();
+    } catch { /* stay quiet; the bell still works */ }
+  }
+
+  async function enablePush() {
+    const avail = pushAvailability();
+    if (avail === 'ios-install') return showIosHelp();
+    if (avail === 'insecure') return toast('Notifications need the site served over HTTPS.');
+    if (avail !== 'ready') return toast('This browser doesn’t support push notifications.');
+    // Safari only allows the permission prompt directly inside the tap, so ask before any other await.
+    const perm = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+    if (perm !== 'granted') {
+      return toast(perm === 'denied'
+        ? 'Notifications are blocked. Allow them for this site in your browser settings, then try again.'
+        : 'Notifications weren’t turned on.');
+    }
+    try {
+      await registerPush();
+      toast('You’ll get a notification when it’s your turn, even with the app closed.', 'ok');
+    } catch (err) {
+      toast(`Couldn’t turn on notifications: ${err.message}`);
+    }
+    render();
+  }
+
+  async function disablePush() {
+    const sub = await currentSubscription().catch(() => null);
+    if (sub) await api(`/games/${id}/push/remove`, { method: 'POST', body: { endpoint: sub.endpoint }, gameId: id }).catch(() => {});
+    local.write((d) => (d.push[id] = 'off'));
+    toast('Notifications off for this game.', 'ok');
+    render();
+  }
+
+  function showIosHelp() {
+    const ov = $('#overlay');
+    ov.dataset.state = 'ios-help';
+    ov.innerHTML = `<div class="modal-bg"><div class="modal panel ios-help">
+      <h2>Turn notifications on iPhone</h2>
+      <p class="muted">Apple only sends web notifications to apps on your Home Screen. It takes about 30 seconds, once.</p>
+      <ol class="steps">
+        <li><b>Copy your games link.</b> The Home Screen app starts empty, and this link brings your seats with you.
+          <button class="btn" id="ios-copy">Copy my games link</button></li>
+        <li>Tap <b>Share</b> <span class="share-glyph">⬆︎</span> in Safari, then <b>Add to Home Screen</b>.</li>
+        <li>Open <b>Cribbage</b> from your Home Screen, paste the link under “Move your games”, open this game and tap <b>🔔</b>.</li>
+      </ol>
+      <div class="modal-actions"><button class="btn primary" id="ios-done">Got it</button></div></div></div>`;
+    $('#ios-copy').onclick = () => copy(allGamesLink(), 'Copied. Now add Cribbage to your Home Screen.');
+    $('#ios-done').onclick = () => {
+      ov.innerHTML = '';
+      ov.dataset.state = '';
+    };
+  }
+
+  function renderPushBanner(v) {
+    const el = $('#push-banner');
+    const d = local.read();
+    const avail = pushAvailability();
+    const show = v.you !== null && v.status !== 'finished' && !pushOn() && d.push[id] !== 'off' && !d.pushDismissed[id]
+      && (avail === 'ready' || avail === 'ios-install')
+      && !(avail === 'ready' && Notification.permission === 'denied');
+    if (!show) {
+      el.innerHTML = '';
+      return;
+    }
+    el.innerHTML = `<div class="push-banner">
+      <span class="pb-icon">🔔</span>
+      <div class="pb-text"><b>Know when it’s your turn</b><span>${avail === 'ios-install'
+        ? 'On iPhone, notifications need Cribbage on your Home Screen.'
+        : 'Get a notification on this device, even with the app closed.'}</span></div>
+      <button class="btn primary" id="pb-on">${avail === 'ios-install' ? 'Show me how' : 'Turn on'}</button>
+      <button class="icon-btn" id="pb-x" title="Not now">✕</button></div>`;
+    $('#pb-on').onclick = enablePush;
+    $('#pb-x').onclick = () => {
+      local.write((x) => (x.pushDismissed[id] = true));
+      renderPushBanner(v);
+    };
   }
 
   async function act(path, body) {
@@ -315,6 +468,7 @@ function mountGame(id) {
     if (!v) return;
     if (v.you === null && v.status === 'lobby') return renderJoin(v);
     renderTopbar(v);
+    renderPushBanner(v);
     renderScores(v);
     renderBoard(v);
     $('#table').innerHTML = v.status === 'lobby' ? lobbyHTML(v) : tableHTML(v);
@@ -324,12 +478,14 @@ function mountGame(id) {
   }
 
   function renderTopbar(v) {
-    const notifOn = 'Notification' in window && Notification.permission === 'granted';
+    const notifOn = pushOn();
+    const avail = pushAvailability();
+    const showBell = v.you !== null && (avail === 'ready' || avail === 'ios-install');
     const meta = v.status === 'lobby' ? 'Lobby' : `Hand ${v.handNo} · ${esc(v.players[v.dealer].name)} deals`;
     $('#topbar').innerHTML = `${brand}
       <div class="top-meta">${meta}</div>
       <div class="top-actions">
-        ${'Notification' in window ? `<button class="icon-btn" id="notif" title="${notifOn ? 'Turn alerts on' : 'Enable turn alerts'}">${notifOn ? '🔔' : '🔕'}</button>` : ''}
+        ${showBell ? `<button class="icon-btn ${notifOn ? 'bell-on' : ''}" id="notif" title="${notifOn ? 'Notifications on (tap to turn off)' : 'Turn on notifications'}" aria-pressed="${notifOn}">${notifOn ? '🔔' : '🔕'}</button>` : ''}
         <button class="btn ghost" id="invite">Invite</button>
         ${v.you !== null ? `<button class="btn ghost" id="device" title="Open this game as you on another device">Other device</button>` : ''}
       </div>`;
@@ -344,12 +500,7 @@ function mountGame(id) {
     }
     const n = $('#notif');
     if (n) {
-      n.onclick = async () => {
-        if (Notification.permission === 'denied') return toast('Alerts are blocked in your browser settings for this site.');
-        await Notification.requestPermission();
-        renderTopbar(v);
-        if (Notification.permission === 'granted') toast('You’ll get an alert when it’s your turn (while this tab is open).', 'ok');
-      };
+      n.onclick = () => (pushOn() ? disablePush() : enablePush());
     }
   }
 
@@ -686,7 +837,7 @@ function mountGame(id) {
       };
       return;
     }
-    if (ov.dataset.state?.startsWith('hand-')) return; // keep it open until dismissed
+    if (ov.dataset.state?.startsWith('hand-') || ov.dataset.state === 'ios-help') return; // keep open until dismissed
     ov.innerHTML = '';
     ov.dataset.state = '';
   }

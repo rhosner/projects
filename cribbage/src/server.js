@@ -4,12 +4,17 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { join, extname, normalize, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openStore } from './store.js';
+import { createPusher, turnNotifications } from './push.js';
 import { createGame, addPlayer, startGame, discard, play, viewFor, RuleError } from './engine.js';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PUBLIC = join(ROOT, 'public');
 const PORT = Number(process.env.PORT || 3000);
 const store = openStore(process.env.DB_PATH || join(ROOT, 'data', 'cribbage.db'));
+// Push services (Apple in particular) require a real contact in the VAPID subject.
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:cribbage-admin@example.com';
+if (!process.env.VAPID_SUBJECT) console.warn('VAPID_SUBJECT is not set; set it to mailto:you@yourdomain for reliable push delivery.');
+const pusher = createPusher({ db: store.db, subject: VAPID_SUBJECT });
 
 const hash = (token) => createHash('sha256').update(token).digest('hex');
 const newToken = () => randomBytes(24).toString('base64url');
@@ -77,11 +82,12 @@ function loadGame(id) {
   return game;
 }
 
-function save(game) {
+function save(game, before = null, actorSeat = null) {
   game.version += 1;
   game.updatedAt = Date.now();
   store.put(game);
   broadcast(game);
+  if (before) pusher.notify(game, turnNotifications(before, game, actorSeat)).catch(() => {});
 }
 
 function requireSeat(game, req) {
@@ -118,8 +124,9 @@ const routes = [
       throw new HttpError(409, 'Someone at the table already has that name');
     }
     const token = newToken();
+    const before = structuredClone(game);
     const seat = addPlayer(game, { id: randomUUID(), name, tokenHash: hash(token) });
-    save(game);
+    save(game, before, seat);
     send(res, 201, { token, seat });
   }],
 
@@ -127,8 +134,9 @@ const routes = [
     const game = loadGame(id);
     const seat = requireSeat(game, req);
     const { cards } = await readJson(req);
+    const before = structuredClone(game);
     discard(game, seat, cards);
-    save(game);
+    save(game, before, seat);
     send(res, 200, viewFor(game, seat));
   }],
 
@@ -136,23 +144,26 @@ const routes = [
     const game = loadGame(id);
     const seat = requireSeat(game, req);
     const { card } = await readJson(req);
+    const before = structuredClone(game);
     play(game, seat, String(card));
-    save(game);
+    save(game, before, seat);
     send(res, 200, viewFor(game, seat));
   }],
 
   ['POST', /^\/api\/games\/([a-z0-9]+)\/rematch$/, async (req, res, [id]) => {
     const game = loadGame(id);
-    requireSeat(game, req);
+    const seat = requireSeat(game, req);
     if (game.status !== 'finished') throw new HttpError(400, 'The game is still going');
     if (!game.nextGameId) {
       const next = createGame({ id: newGameId(), numPlayers: game.numPlayers });
       // Same people and seats; startGame picks a fresh random dealer.
       next.players = game.players.map((p) => ({ ...p, joinedAt: Date.now() }));
       next.previousGameId = game.id;
+      const lobby = structuredClone(next);
       startGame(next);
       next.version = 1;
       store.put(next);
+      pusher.notify(next, turnNotifications(lobby, next, seat)).catch(() => {});
       game.nextGameId = next.id;
       save(game);
     }
@@ -175,6 +186,28 @@ const routes = [
       subs?.delete(res);
       if (subs && !subs.size) subscribers.delete(id);
     });
+  }],
+
+  ['GET', /^\/api\/push\/key$/, async (_req, res) => send(res, 200, { publicKey: pusher.publicKey })],
+
+  ['POST', /^\/api\/games\/([a-z0-9]+)\/push$/, async (req, res, [id]) => {
+    const game = loadGame(id);
+    const seat = requireSeat(game, req);
+    const { subscription } = await readJson(req);
+    try {
+      pusher.subscribe(id, seat, subscription);
+    } catch (err) {
+      throw new HttpError(400, err.message);
+    }
+    send(res, 200, { ok: true });
+  }],
+
+  ['POST', /^\/api\/games\/([a-z0-9]+)\/push\/remove$/, async (req, res, [id]) => {
+    const game = loadGame(id);
+    requireSeat(game, req);
+    const { endpoint } = await readJson(req);
+    pusher.unsubscribe(id, endpoint);
+    send(res, 200, { ok: true });
   }],
 
   ['GET', /^\/healthz$/, async (_req, res) => send(res, 200, { ok: true })],
@@ -204,7 +237,7 @@ async function serveStatic(req, res) {
   }
   res.writeHead(200, {
     'Content-Type': TYPES[extname(file)] || 'application/octet-stream',
-    'Cache-Control': path === '/index.html' ? 'no-cache' : 'public, max-age=300',
+    'Cache-Control': ['/index.html', '/sw.js', '/manifest.webmanifest'].includes(path) ? 'no-cache' : 'public, max-age=300',
   });
   res.end(await readFile(file));
 }

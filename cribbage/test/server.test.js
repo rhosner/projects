@@ -56,6 +56,15 @@ test('4-player game over HTTP, with auth checks and rematch', async () => {
   const forged = await call(`/api/games/${id}/play`, { method: 'POST', body: { card: 'AS' }, token: 'nope' });
   assert.equal(forged.status, 403);
 
+  // Push endpoints
+  const key = await call('/api/push/key');
+  assert.equal(Buffer.from(key.data.publicKey, 'base64url').length, 65);
+  const sub = { endpoint: 'https://push.example.test/x', keys: { p256dh: 'BKey', auth: 'auth' } };
+  assert.equal((await call(`/api/games/${id}/push`, { method: 'POST', body: { subscription: sub } })).status, 403, 'needs a seat');
+  assert.equal((await call(`/api/games/${id}/push`, { method: 'POST', body: { subscription: sub }, token: tokens[1] })).status, 200);
+  assert.equal((await call(`/api/games/${id}/push`, { method: 'POST', body: { subscription: { endpoint: 'nope' } }, token: tokens[1] })).status, 400);
+  assert.equal((await call(`/api/games/${id}/push/remove`, { method: 'POST', body: { endpoint: sub.endpoint }, token: tokens[1] })).status, 200);
+
   let guard = 0;
   let v;
   while (guard++ < 2000) {

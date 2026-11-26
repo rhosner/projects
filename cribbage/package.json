@@ -4,10 +4,15 @@
   "description": "Persistent, turn-based cribbage for 2-4 friends",
   "type": "module",
   "private": true,
-  "engines": { "node": ">=22.5" },
+  "engines": {
+    "node": ">=22.5"
+  },
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning src/server.js",
     "dev": "node --disable-warning=ExperimentalWarning --watch src/server.js",
     "test": "node --test"
+  },
+  "dependencies": {
+    "web-push": "^3.6.7"
   }
 }
