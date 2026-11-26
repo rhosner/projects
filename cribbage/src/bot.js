@@ -2,6 +2,7 @@
 // shared by the server and the in-browser demo.
 import {
   newDeck, scoreHand, scorePegging, valueOf, rankOf, legalPlays, discardCount, sideOf,
+  discard, play, autoStep, peekStep, STEP_DELAY, randomInt,
 } from './engine.js';
 
 export const BOT_NAMES = ['Botley', 'Ada', 'Pegsy', 'Muggins'];
@@ -89,4 +90,30 @@ export function botMove(state) {
     return state.players[seat]?.bot ? { type: 'play', seat, card: choosePlay(state, seat) } : null;
   }
   return null;
+}
+
+/**
+ * The next thing that happens without a human: an automatic step or a bot move.
+ * Returns { kind, delay, apply(state) } or null. `apply` re-reads the state it's
+ * given, so a fresh copy loaded after the delay is safe to pass in.
+ * `pace` scales every delay (tests use a tiny value).
+ */
+export function nextAutomatic(state, { pace = 1, rng = randomInt } = {}) {
+  const jitter = (base, spread) => Math.round(base * pace * (1 + (Math.random() * 2 - 1) * spread));
+  const step = peekStep(state);
+  if (step) return { kind: step, delay: jitter(STEP_DELAY[step], 0.12), apply: (g) => autoStep(g, rng) };
+  const m = botMove(state);
+  if (!m) return null;
+  const kind = m.type === 'discard' ? 'bot-discard' : 'bot-play';
+  return {
+    kind,
+    delay: jitter(STEP_DELAY[kind], 0.4), // people don't think at a fixed speed
+    apply: (g) => {
+      const move = botMove(g);
+      if (!move) return null;
+      if (move.type === 'discard') discard(g, move.seat, move.cards, rng);
+      else play(g, move.seat, move.card, rng);
+      return kind;
+    },
+  };
 }

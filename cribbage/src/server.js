@@ -5,7 +5,7 @@ import { join, extname, normalize, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openStore } from './store.js';
 import { createPusher, turnNotifications } from './push.js';
-import { botMove, BOT_NAMES } from './bot.js';
+import { nextAutomatic, BOT_NAMES } from './bot.js';
 import { createGame, addPlayer, startGame, discard, play, viewFor, RuleError } from './engine.js';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -92,29 +92,34 @@ function save(game, before = null, actorSeat = null) {
   scheduleBots(game.id);
 }
 
-// --- bots ---------------------------------------------------------------------
-// Bots move on a short delay so humans can follow along. Each step reloads the
-// game, so a human move in between is never overwritten.
-const BOT_DELAY = Number(process.env.BOT_DELAY_MS ?? 900);
-const botTimers = new Map();
+// --- automatic steps and bots ---------------------------------------------------
+// Forced plays, "Go", scoring, dealing and bot moves each happen after a short
+// pause, one step per save, so everyone watching can follow along. Each tick
+// reloads the game and recomputes the step, so a human move made during a pause
+// is never overwritten.
+const PACE = Number(process.env.PACE ?? 1); // multiplier on every pause; tests use a tiny value
+const autoTimers = new Map();
+const RECENT_MS = 20_000;
 function scheduleBots(id) {
-  if (botTimers.has(id)) return;
+  if (autoTimers.has(id)) return;
   const game = store.get(id);
-  if (!game || !botMove(game)) return;
-  botTimers.set(id, setTimeout(() => {
-    botTimers.delete(id);
+  const next = game && nextAutomatic(game, { pace: PACE });
+  if (!next) return;
+  autoTimers.set(id, setTimeout(() => {
+    autoTimers.delete(id);
     const g = store.get(id);
-    const move = g && botMove(g);
-    if (!move) return;
+    const step = g && nextAutomatic(g, { pace: PACE });
+    if (!step) return;
     const before = structuredClone(g);
     try {
-      if (move.type === 'discard') discard(g, move.seat, move.cards);
-      else play(g, move.seat, move.card);
+      if (!step.apply(g)) return;
     } catch (err) {
-      return console.error('bot move failed', err);
+      return console.error('automatic step failed', err);
     }
-    save(g, before, move.seat);
-  }, BOT_DELAY));
+    // Don't ping someone about a turn that came back to them seconds after they acted.
+    const actor = g.lastActor != null && Date.now() - (g.lastActorAt ?? 0) < RECENT_MS ? g.lastActor : null;
+    save(g, before, actor);
+  }, next.delay));
 }
 
 function requireSeat(game, req) {
@@ -138,7 +143,7 @@ const routes = [
 
   ['GET', /^\/api\/games\/([a-z0-9]+)$/, async (req, res, [id]) => {
     const game = loadGame(id);
-    scheduleBots(id); // resumes bots after a server restart
+    scheduleBots(id); // resumes paused steps after a server restart
     send(res, 200, viewFor(game, seatFor(game, req)));
   }],
 

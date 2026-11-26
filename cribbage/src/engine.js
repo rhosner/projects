@@ -207,6 +207,13 @@ function startHand(state, rng) {
   log(state, `Hand ${state.handNo}: ${state.players[state.dealer].name} deals`, { kind: 'hand' });
 }
 
+// Remembered so notifications can skip someone who just acted and is still looking.
+function noteHumanAction(state, seat) {
+  if (state.players[seat]?.bot) return;
+  state.lastActor = seat;
+  state.lastActorAt = Date.now();
+}
+
 const nextSeat = (state, seat) => (seat + 1) % state.numPlayers;
 
 export function discard(state, seat, cards, rng = randomInt) {
@@ -223,6 +230,7 @@ export function discard(state, seat, cards, rng = randomInt) {
   state.hands[seat] = [];
   state.crib.push(...cards);
   state.discarded[seat] = true;
+  noteHumanAction(state, seat);
   log(state, `${state.players[seat].name} sent ${need === 1 ? 'a card' : 'two cards'} to the crib`);
 
   if (state.discarded.every(Boolean)) cutStarter(state, rng);
@@ -247,7 +255,6 @@ function cutStarter(state, rng) {
     saidGo: Array(state.numPlayers).fill(false),
   };
   state.phase = 'pegging';
-  runPegging(state, rng);
 }
 
 export function legalPlays(state, seat) {
@@ -261,8 +268,8 @@ export function play(state, seat, card, rng = randomInt) {
   if (state.pegging.turn !== seat) throw new RuleError("It's not your turn");
   if (!state.pegging.remaining[seat].includes(card)) throw new RuleError('That card is not in your hand');
   if (!legalPlays(state, seat).includes(card)) throw new RuleError('That would go over 31');
+  noteHumanAction(state, seat);
   doPlay(state, seat, card, false);
-  runPegging(state, rng);
 }
 
 function doPlay(state, seat, card, auto) {
@@ -296,56 +303,105 @@ function resetCount(p) {
   if (p.history.length) p.history[p.history.length - 1].reset = true;
 }
 
-function runPegging(state, rng) {
+// ---------------------------------------------------------------------------
+// Automatic steps. Everything that happens without a decision (forced plays,
+// "Go", go and last-card points, counting hands, dealing) is applied one
+// visible step at a time, so the server can pause between them and players
+// can follow along instead of seeing it all land at once.
+// ---------------------------------------------------------------------------
+
+/** Base pause before each kind of step, in ms. Callers scale and jitter these. */
+export const STEP_DELAY = {
+  forced: 900,
+  go: 800,
+  'go-point': 1200,
+  'last-card': 1100,
+  'end-pegging': 1600,
+  deal: 2600,
+  'bot-discard': 1500,
+  'bot-play': 1100,
+};
+
+/**
+ * Apply the next automatic step, if any. Returns its kind, or null when the
+ * game is waiting on a real decision (a human or a bot choosing a card).
+ */
+export function autoStep(state, rng = randomInt) {
+  if (state.status !== 'playing') return null;
+  if (state.phase === 'show') {
+    state.dealer = nextSeat(state, state.dealer);
+    startHand(state, rng);
+    return 'deal';
+  }
+  if (state.phase !== 'pegging') return null;
+
   const p = state.pegging;
   const n = state.numPlayers;
   const canPlay = (s) => p.remaining[s].some((c) => valueOf(c) + p.count <= 31);
 
-  for (let guard = 0; guard < 500; guard++) {
-    if (state.status === 'finished') return;
-
-    if (p.remaining.every((h) => h.length === 0)) {
-      if (p.count > 0) {
-        log(state, `${state.players[p.lastPlayer].name} scores 1 for last card`, { seat: p.lastPlayer, points: 1 });
-        addPoints(state, p.lastPlayer, 1);
-        if (state.status === 'finished') return;
-      }
-      return endPegging(state, rng);
-    }
-
-    if (![...Array(n).keys()].some(canPlay)) {
-      log(state, `${state.players[p.lastPlayer].name} scores 1 for the go`, { seat: p.lastPlayer, points: 1 });
+  if (p.remaining.every((h) => h.length === 0)) {
+    if (p.count > 0 && !p.lastCardDone) {
+      p.lastCardDone = true;
+      log(state, `${state.players[p.lastPlayer].name} scores 1 for last card`, { seat: p.lastPlayer, points: 1 });
       addPoints(state, p.lastPlayer, 1);
-      if (state.status === 'finished') return;
-      resetCount(p);
-      p.turn = nextSeat(state, p.lastPlayer);
-      continue;
+      return 'last-card';
     }
+    endPegging(state);
+    return 'end-pegging';
+  }
 
+  if (![...Array(n).keys()].some(canPlay)) {
+    // Like at a real table: whoever is up says "Go" before the point is pegged.
     const t = p.turn;
-    if (p.remaining[t].length === 0) {
+    if (t !== p.lastPlayer && p.remaining[t].length && !p.saidGo[t]) {
+      p.saidGo[t] = true;
+      log(state, `${state.players[t].name}: “Go”`, { seat: t });
+      p.turn = nextSeat(state, t);
+      return 'go';
+    }
+    log(state, `${state.players[p.lastPlayer].name} scores 1 for the go`, { seat: p.lastPlayer, points: 1 });
+    addPoints(state, p.lastPlayer, 1);
+    if (state.status === 'finished') return 'go-point';
+    resetCount(p);
+    p.turn = nextSeat(state, p.lastPlayer);
+    return 'go-point';
+  }
+
+  // Players who are out of cards, or already said Go, pass silently.
+  for (let i = 0; i < n; i++) {
+    const t = p.turn;
+    if (p.remaining[t].length === 0 || (!canPlay(t) && p.saidGo[t])) {
       p.turn = nextSeat(state, t);
       continue;
     }
     if (!canPlay(t)) {
-      if (!p.saidGo[t]) {
-        p.saidGo[t] = true;
-        log(state, `${state.players[t].name}: “Go”`, { seat: t });
-      }
+      p.saidGo[t] = true;
+      log(state, `${state.players[t].name}: “Go”`, { seat: t });
       p.turn = nextSeat(state, t);
-      continue;
+      return 'go';
     }
     const legal = legalPlays(state, t);
     if (state.autoPlay && legal.length === 1) {
       doPlay(state, t, legal[0], true);
-      continue;
+      return 'forced';
     }
-    return; // waiting on a real decision
+    return null; // waiting on a real decision
   }
-  throw new Error('Pegging loop did not settle');
+  return null;
 }
 
-function endPegging(state, rng) {
+/** What autoStep would do next, without changing the game. */
+export function peekStep(state) {
+  return autoStep(structuredClone(state), () => 0);
+}
+
+/** Run every automatic step immediately (tests and simulations). */
+export function settle(state, rng = randomInt) {
+  for (let guard = 0; guard < 500; guard++) if (!autoStep(state, rng)) return;
+  throw new Error('Game did not settle');
+}
+
+function endPegging(state) {
   const n = state.numPlayers;
   const lastHand = {
     handNo: state.handNo,
@@ -373,10 +429,6 @@ function endPegging(state, rng) {
     kind: 'show',
   });
   addPoints(state, state.dealer, crib.total);
-  if (state.status === 'finished') return;
-
-  state.dealer = nextSeat(state, state.dealer);
-  startHand(state, rng);
 }
 
 // ---------------------------------------------------------------------------
@@ -386,13 +438,19 @@ function endPegging(state, rng) {
 export function currentHand(state, seat) {
   if (state.phase === 'discard') return state.discarded[seat] ? state.kept[seat] : state.hands[seat];
   if (state.phase === 'pegging') return state.pegging.remaining[seat];
+  if (state.phase === 'show') return state.kept[seat] ?? [];
   return [];
 }
 
 export function isTurn(state, seat) {
   if (state.status !== 'playing') return false;
   if (state.phase === 'discard') return !state.discarded[seat];
-  if (state.phase === 'pegging') return state.pegging.turn === seat;
+  if (state.phase === 'pegging') {
+    // "Your turn" means the game is waiting on your decision. A forced card or a
+    // "Go" is played for you after a pause, so it doesn't count.
+    if (state.pegging.turn !== seat) return false;
+    return legalPlays(state, seat).length > (state.autoPlay ? 1 : 0);
+  }
   return false;
 }
 

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createGame, addPlayer, discard, play, legalPlays, discardCount } from '../src/engine.js';
+import { createGame, addPlayer, discard, play, legalPlays, discardCount, settle } from '../src/engine.js';
 import { botMove, chooseDiscard } from '../src/bot.js';
 
 function seeded(seed) {
@@ -15,6 +15,8 @@ function match(seed, { bothBots = false, n = 2 } = {}) {
   for (let i = 0; i < n; i++) addPlayer(g, { id: `p${i}`, name: `P${i}`, tokenHash: 'x', bot: i % 2 === 0 || bothBots }, rng);
   let guard = 0;
   while (g.status === 'playing' && guard++ < 3000) {
+    settle(g, rng);
+    if (g.status !== 'playing') break;
     const m = botMove(g);
     if (m) {
       if (m.type === 'discard') discard(g, m.seat, m.cards, rng);

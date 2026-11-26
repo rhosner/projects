@@ -1,10 +1,9 @@
 // In-browser stand-in for the server, used by the demo build. Same engine and
 // bot as the real server; games live in this browser's localStorage.
 import { createGame, addPlayer, startGame, discard, play, viewFor, RuleError } from './engine.js';
-import { botMove, BOT_NAMES } from './bot.js';
+import { nextAutomatic, BOT_NAMES } from './bot.js';
 
 const KEY = 'cribbage.demo.games';
-const BOT_DELAY = 850;
 
 let games = {};
 try {
@@ -49,16 +48,14 @@ function save(g) {
 function scheduleBots(id) {
   if (timers.has(id)) return;
   const g = games[id];
-  if (!g || !botMove(g)) return;
+  const next = g && nextAutomatic(g);
+  if (!next) return;
   timers.set(id, setTimeout(() => {
     timers.delete(id);
     const game = games[id];
-    const m = game && botMove(game);
-    if (!m) return;
-    if (m.type === 'discard') discard(game, m.seat, m.cards);
-    else play(game, m.seat, m.card);
-    save(game);
-  }, BOT_DELAY));
+    const step = game && nextAutomatic(game);
+    if (step && step.apply(game)) save(game);
+  }, next.delay));
 }
 
 const view = (g, seat) => JSON.parse(JSON.stringify(viewFor(g, seat)));

@@ -10,7 +10,7 @@ Scoring is automatic: fifteens, pairs, runs, flushes (crib flushes need all 5 ca
 
 ## Bots
 
-Short a player? Tap **Play bots right now** on the home page, or **Fill empty seats with bots** in a lobby. Bots play their own turns on the server after a short pause (`BOT_DELAY_MS`, default 900). The bot picks its discard by averaging every possible starter card and pegs to take points and avoid giving them away. It beats random play almost every time, but it doesn't count cards or model opponents, so a decent player should beat it often.
+Short a player? Tap **Play bots right now** on the home page, or **Fill empty seats with bots** in a lobby. Bots play their own turns on the server after a short, slightly varied pause. The bot picks its discard by averaging every possible starter card and pegs to take points and avoid giving them away. It beats random play almost every time, but it doesn't count cards or model opponents, so a decent player should beat it often.
 
 ### Demo with no server
 
@@ -21,7 +21,7 @@ Short a player? Tap **Play bots right now** on the home page, or **Fill empty se
 1. Create a game and copy the invite link into your group chat.
 2. Friends open the link and enter a name. No accounts. The game starts once every seat is taken.
 3. Each browser remembers its seat. To use the same seat on your phone, use **Other device** to copy a personal link (it signs in as you, so don't share it).
-4. To keep async games moving, the app makes forced moves automatically: a "Go" when you can't play, and your card when only one is legal. You only get asked when there's a real choice.
+4. To keep async games moving, the app makes forced moves automatically: a "Go" when you can't play, and your card when only one is legal. You only get asked when there's a real choice. Each automatic step (forced plays, Go, the go and last-card points, counting the hands, the next deal) happens on its own beat with a short pause, so you can follow what happened. Set `PACE` to scale every pause (`PACE=0.5` is twice as fast).
 5. If more than one person has the game open, they see each other's moves instantly (Server-Sent Events).
 6. **Push notifications.** Tap **Turn on** (or the 🔔) in a game and you'll get a notification when it's your turn, when a new hand is dealt, and when the game ends, even with the app closed. You never get one for your own moves. Turning it on for one game means the device is subscribed to your other games too; you can turn it off per game.
 

@@ -638,8 +638,13 @@ function mountGame(id) {
       const waiting = v.players.filter((p) => !p.discarded).map((p) => esc(p.name));
       return `Waiting for ${waiting.join(', ')} to discard`;
     }
+    if (v.phase === 'show') return 'Counting the hands…';
     if (v.phase === 'pegging') {
+      if (v.players.every((p) => p.cardCount === 0)) return 'That’s every card. Counting the hands…';
       if (v.yourTurn) return `Your play. The count is <b>${v.pegging.count}</b>`;
+      if (v.pegging.turn === v.you) {
+        return v.legal.length === 1 ? `Your only card, ${cardText(v.legal[0])}, plays itself…` : 'You can’t play. Go!';
+      }
       return `Waiting for ${esc(name(v.pegging.turn))} to play`;
     }
     return '';
@@ -816,14 +821,14 @@ function mountGame(id) {
   }
 
   const KIND_LABEL = { fifteen: 'Fifteen', pair: 'Pair', run: 'Run', flush: 'Flush', nobs: 'Nobs' };
-  function lastHandHTML(v) {
+  function lastHandHTML(v, reveal = false) {
     const L = v.lastHand;
-    return `<div class="last">
+    return `<div class="last ${reveal ? 'reveal' : ''}">
       <div class="last-head"><span>Hand ${L.handNo} · starter</span>${cardHTML(L.starter, { cls: 'xs-face' })}</div>
-      ${L.shows.map((s) => {
+      ${L.shows.map((s, k) => {
         const p = v.players[s.seat];
         const who = s.crib ? `${s.seat === v.you ? 'Your' : `${esc(p.name)}’s`} crib` : s.seat === v.you ? 'Your hand' : esc(p.name);
-        return `<div class="show" style="--c:${SIDE_COLORS[p.side]}">
+        return `<div class="show" style="--c:${SIDE_COLORS[p.side]};--k:${k}">
           <div class="show-head"><b>${who}</b><span class="show-total">${s.total}</span></div>
           <div class="show-cards">${sortCards(s.cards).map((c) => cardHTML(c, { cls: 'xs-face' })).join('')}<span class="plus">+</span>${cardHTML(L.starter, { cls: 'xs-face dim' })}</div>
           ${s.items.length ? `<ul class="items">${s.items.map((i) => `<li><span>${KIND_LABEL[i.kind] || i.kind}${i.kind === 'run' ? ` of ${i.cards.length}` : ''}</span><span class="minis">${miniCards(sortCards(i.cards))}</span><b>${i.points}</b></li>`).join('')}</ul>` : '<p class="muted small">Nineteen. Nothing.</p>'}
@@ -871,8 +876,8 @@ function mountGame(id) {
       ov.dataset.state = `hand-${v.lastHand.handNo}`;
       ov.innerHTML = `<div class="modal-bg"><div class="modal panel">
         <h2>Hand ${v.lastHand.handNo} results</h2>
-        ${lastHandHTML(v)}
-        <div class="modal-actions"><button class="btn primary big" id="close-ov">On to hand ${v.handNo}</button></div></div></div>`;
+        ${lastHandHTML(v, true)}
+        <div class="modal-actions"><button class="btn primary big" id="close-ov">On to hand ${v.lastHand.handNo + 1}</button></div></div></div>`;
       $('#close-ov').onclick = () => {
         local.write((d) => (d.seenHands[id] = v.lastHand.handNo));
         ov.innerHTML = '';

@@ -394,6 +394,11 @@ h2 { font-size: 20px; margin: 0 0 14px; }
 .steps .btn { margin-top: 8px; display: flex; }
 .share-glyph { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: var(--panel-2); font-size: 12px; }
 
+/* Hands are revealed one at a time, in counting order, when results first appear. */
+.last.reveal .show { animation: deal-in .5s calc(.35s + var(--k) * .7s) cubic-bezier(.2, 1.2, .5, 1) both; }
+.last.reveal .show-total { animation: pop .45s calc(.6s + var(--k) * .7s) cubic-bezier(.3, 1.8, .5, 1) both; }
+.last.reveal ~ .modal-actions { animation: fade .4s calc(.5s + 3 * .7s) both; }
+
 /* ---------- modals ---------- */
 .modal-bg { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: rgba(2, 8, 6, .65); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); animation: fade .25s ease both; }
 .modal { width: min(520px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; animation: rise .35s cubic-bezier(.2, 1.2, .5, 1) both; background: linear-gradient(180deg, #13241d, #0c1813); }
