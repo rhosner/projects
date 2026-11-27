@@ -5,6 +5,12 @@ import {
   pushAvailability, ensureSubscription, currentSubscription, registerServiceWorker, isStandalone,
 } from './push-client.js';
 import { sfx, soundPrefs, setSoundPref } from './sound.js';
+import {
+  holdemTableHTML, bindHoldem, tickTimers, holdemLastHandHTML, holdemOverHTML, seatColor, chips as chipsHTML, ordinal,
+} from './holdem-ui.js';
+
+const GAME_NAMES = { cribbage: 'Cribbage', holdem: 'Texas Hold’em' };
+const gameName = (v) => GAME_NAMES[v.type ?? 'cribbage'];
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
@@ -139,7 +145,7 @@ const currentPath = () => (LOCAL ? memPath : location.pathname);
 function route() {
   teardown();
   teardown = () => {};
-  document.title = 'Cribbage';
+  document.title = 'Card Night';
   if (currentPath() === '/leaders') return renderLeaders();
   if (LOCAL) {
     const m = currentPath().match(/^\/g\/([a-z0-9]+)/);
@@ -183,7 +189,7 @@ document.addEventListener('click', (e) => {
   }
 });
 
-const brand = `<a href="/" data-link class="brand"><span class="brand-mark">♣</span><span>Cribbage</span></a>`;
+const brand = `<a href="/" data-link class="brand"><span class="brand-mark">♣</span><span>Card Night</span></a>`;
 
 // ---------------------------------------------------------------------------
 // Home
@@ -193,6 +199,7 @@ const brand = `<a href="/" data-link class="brand"><span class="brand-mark">♣<
 // ---------------------------------------------------------------------------
 const pct = (r) => (r == null ? '–' : `${Math.round(r * 100)}%`);
 
+let leaderGame = 'cribbage';
 async function renderLeaders() {
   app.innerHTML = `
     <div class="home leaders">
@@ -200,12 +207,19 @@ async function renderLeaders() {
       <section class="hero slim">
         <h1>Leaderboard</h1>
         <p>Every finished game on this ${LOCAL ? 'device' : 'server'}. Tap a player to see how they've done against each opponent.</p>
+        <div class="tabs lb-tabs" role="tablist">${Object.entries(GAME_NAMES).map(([k, n]) => `<button role="tab" data-lb="${k}" class="${k === leaderGame ? 'on' : ''}" aria-selected="${k === leaderGame}">${n}</button>`).join('')}</div>
       </section>
       <div class="panel board-panel" id="leaders"><div class="loading"><div class="spinner"></div></div></div>
     </div>`;
+  for (const b of app.querySelectorAll('[data-lb]')) {
+    b.onclick = () => {
+      leaderGame = b.dataset.lb;
+      renderLeaders();
+    };
+  }
   let data;
   try {
-    data = await api('/stats');
+    data = await api(`/stats?game=${leaderGame}`);
   } catch (err) {
     $('#leaders').innerHTML = `<p class="muted">Couldn't load the leaderboard: ${esc(err.message)}</p>`;
     return;
@@ -214,7 +228,7 @@ async function renderLeaders() {
   if (!el) return;
   const rows = data.players;
   if (!rows.length) {
-    el.innerHTML = `<div class="empty"><p>No finished games yet. Records show up here once a game reaches 121.</p></div>`;
+    el.innerHTML = `<div class="empty"><p>No finished ${GAME_NAMES[leaderGame]} games yet. Records show up here when a game ends${leaderGame === 'holdem' ? ' (one player holds every chip)' : ' (someone reaches 121)'}.</p></div>`;
     return;
   }
   const me = rows.find((p) => p.id === data.you);
@@ -242,7 +256,7 @@ async function renderLeaders() {
             <b>${o.wins}–${o.losses}</b></li>`).join('') || '<li class="muted">No opponents yet</li>'}</ul>
         </div></td></tr>`).join('')}
       </tbody></table></div>
-    <p class="hint">Team games count as a win for both partners. In 3- and 4-player games the winner beats everyone at the table. Records follow each browser's player; use “Move your games to another device” on the home page to keep one record across your phone and computer.</p>`;
+    <p class="hint">${leaderGame === 'holdem' ? 'A tournament win beats everyone at the table; everyone else records a loss to the winner.' : 'Team games count as a win for both partners. In 3- and 4-player games the winner beats everyone at the table.'} Records follow each browser's player; use “Move your games to another device” on the home page to keep one record across your phone and computer.</p>`;
   for (const row of el.querySelectorAll('.lb-row')) {
     const toggle = () => {
       const detail = row.nextElementSibling;
@@ -256,26 +270,47 @@ async function renderLeaders() {
 
 function renderHome() {
   const data = local.read();
-  // Game formats offered on the home screen: [key, label, players, teams]
+  // Cribbage formats: [key, label, players, teams]
   const MODES = [['2', '2', 2, false], ['3', '3', 3, false], ['4', '4', 4, false], ['4t', '2 v 2', 4, true]];
   let mode = MODES[0];
+  let game = data.lastGame === 'holdem' ? 'holdem' : 'cribbage';
+  const sel = (id, opts, value) => `<select id="${id}">${opts.map(([v, l]) => `<option value="${v}" ${String(v) === String(value) ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
   app.innerHTML = `
     <div class="home">
       <header class="topbar">${brand}<div class="top-actions"><a class="btn ghost" href="/leaders" data-link>🏆 Leaderboard</a></div></header>
       <section class="hero">
-        <h1>Cribbage with your friends,<br><span class="grad">on your own time.</span></h1>
-        <p>Every game saves itself. Make your play, close the tab, and come back when it's your turn again.</p>
+        <h1>Card games with your friends,<br><span class="grad">wherever they are.</span></h1>
+        <p>Cribbage you can play on your own time, and Texas Hold’em for game night. Every game saves itself.</p>
       </section>
       <div class="home-grid">
         <form class="panel create" id="create">
           <h2>New game</h2>
+          <div class="game-pick" role="radiogroup" aria-label="Game">
+            <button type="button" role="radio" data-game="cribbage" aria-checked="${game === 'cribbage'}"><span class="gp-icon">♣</span><b>Cribbage</b><small>2–4 players · play anytime</small></button>
+            <button type="button" role="radio" data-game="holdem" aria-checked="${game === 'holdem'}"><span class="gp-icon">♠</span><b>Texas Hold’em</b><small>2–9 players · play live</small></button>
+            <button type="button" disabled title="Coming soon"><span class="gp-icon">31</span><b>Thirty-One</b><small>Coming soon</small></button>
+          </div>
           <label class="field"><span>Your name</span>
             <input name="name" maxlength="20" autocomplete="nickname" placeholder="e.g. Sam" value="${esc(data.name)}" required></label>
-          <div class="field"><span>Players</span>
-            <div class="seg" role="radiogroup">
-              ${MODES.map(([key, label]) => `<button type="button" role="radio" data-n="${key}" aria-checked="${key === '2'}">${label}</button>`).join('')}
+          <div id="opts-cribbage" class="game-opts" ${game === 'cribbage' ? '' : 'hidden'}>
+            <div class="field"><span>Players</span>
+              <div class="seg" role="radiogroup">
+                ${MODES.map(([key, label]) => `<button type="button" role="radio" data-n="${key}" aria-checked="${key === '2'}">${label}</button>`).join('')}
+              </div>
+              <small class="hint" id="players-hint">Classic head-to-head. 6 cards each, 2 to the crib.</small>
             </div>
-            <small class="hint" id="players-hint">Classic head-to-head. 6 cards each, 2 to the crib.</small>
+          </div>
+          <div id="opts-holdem" class="game-opts" ${game === 'holdem' ? '' : 'hidden'}>
+            <div class="opt-grid">
+              <label class="field"><span>Seats</span>${sel('he-seats', [2, 3, 4, 5, 6, 7, 8, 9].map((n) => [n, `${n} players`]), 6)}</label>
+              <label class="field"><span>Starting chips</span>${sel('he-stack', [[500, '500'], [1000, '1,000'], [1500, '1,500 (standard)'], [2500, '2,500'], [5000, '5,000'], [10000, '10,000'], ['custom', 'Custom…']], 1500)}</label>
+              <label class="field" id="he-stack-custom-wrap" hidden><span>Custom starting chips</span><input id="he-stack-custom" type="number" min="100" max="1000000" step="50" value="3000" inputmode="numeric"></label>
+              <label class="field"><span>Blinds</span>${sel('he-blinds', [[10, '5 / 10'], [20, '10 / 20 (standard)'], [50, '25 / 50'], [100, '50 / 100'], [200, '100 / 200'], ['custom', 'Custom…']], 20)}</label>
+              <label class="field" id="he-bb-custom-wrap" hidden><span>Custom big blind</span><input id="he-bb-custom" type="number" min="2" max="100000" step="2" value="40" inputmode="numeric"></label>
+              <label class="field"><span>Blinds go up</span>${sel('he-levels', [[5, 'Every 5 hands'], [10, 'Every 10 hands'], [15, 'Every 15 hands'], [20, 'Every 20 hands'], [0, 'Never']], 10)}</label>
+              <label class="field"><span>Time to act</span>${sel('he-timer', [[30, '30 seconds'], [60, '60 seconds'], [120, '2 minutes']], 60)}</label>
+            </div>
+            <small class="hint">Tournament: everyone starts equal, blinds double on schedule, last player with chips wins. When time runs out you check, or fold if there’s a bet. The host can start before every seat fills.</small>
           </div>
           ${LOCAL ? '' : '<button class="btn primary big" type="submit">Create game &amp; get invite link</button>'}
           <button class="btn ${LOCAL ? 'primary' : ''} big" type="button" id="vs-bot">🤖 ${LOCAL ? 'Start a game' : 'Play bots right now'}</button>
@@ -309,20 +344,43 @@ function renderHome() {
       $('#players-hint').textContent = hints[mode[0]];
     };
   }
+  for (const b of app.querySelectorAll('.game-pick [data-game]')) {
+    b.onclick = () => {
+      game = b.dataset.game;
+      app.querySelectorAll('.game-pick [data-game]').forEach((x) => x.setAttribute('aria-checked', x === b));
+      $('#opts-cribbage').hidden = game !== 'cribbage';
+      $('#opts-holdem').hidden = game !== 'holdem';
+    };
+  }
+  $('#he-stack').onchange = () => ($('#he-stack-custom-wrap').hidden = $('#he-stack').value !== 'custom');
+  $('#he-blinds').onchange = () => ($('#he-bb-custom-wrap').hidden = $('#he-blinds').value !== 'custom');
+
+  function newGameBody(name) {
+    if (game === 'cribbage') return { type: 'cribbage', name, numPlayers: mode[2], teams: mode[3] };
+    const stack = $('#he-stack').value === 'custom' ? Number($('#he-stack-custom').value) : Number($('#he-stack').value);
+    const bb = $('#he-blinds').value === 'custom' ? Number($('#he-bb-custom').value) : Number($('#he-blinds').value);
+    return {
+      type: 'holdem', name, numPlayers: Number($('#he-seats').value),
+      settings: { startingStack: stack, bigBlind: bb, smallBlind: Math.max(1, Math.floor(bb / 2)), levelHands: Number($('#he-levels').value), actionSeconds: Number($('#he-timer').value) },
+    };
+  }
   async function create(withBots) {
     const form = $('#create');
     const name = form.name.value.trim();
     if (!name) return form.name.focus();
     form.querySelectorAll('button').forEach((b) => (b.disabled = true));
     try {
-      const { id, token } = await api('/games', { method: 'POST', body: { name, numPlayers: mode[2], teams: mode[3] } });
+      const { id, token } = await api('/games', { method: 'POST', body: newGameBody(name) });
       local.remember(id, token);
-      local.write((d) => (d.name = name));
+      local.write((d) => {
+        d.name = name;
+        d.lastGame = game;
+      });
       if (withBots) await api(`/games/${id}/bots`, { method: 'POST', gameId: id });
       go(`/g/${id}`);
     } catch (err) {
       toast(err.message);
-      form.querySelectorAll('button').forEach((b) => (b.disabled = false));
+      form.querySelectorAll('button:not([title="Coming soon"])').forEach((b) => (b.disabled = false));
     }
   }
   $('#vs-bot').onclick = () => create(true);
@@ -334,7 +392,7 @@ function renderHome() {
   $('#paste-link').onsubmit = (e) => {
     e.preventDefault();
     const n = importLink(e.target.link.value);
-    if (!n) return toast("That doesn't look like a Cribbage personal link.");
+    if (!n) return toast("That doesn't look like a Card Night personal link.");
     toast(`Added ${n} game${n === 1 ? '' : 's'}`, 'ok');
     renderHome();
   };
@@ -373,23 +431,27 @@ function gameRow(v) {
     return `<div class="game-row dead"><div><b>Game ${esc(v.id)}</b><small>${v.error.status === 404 ? 'No longer exists' : 'Could not load'}</small></div>
       <button class="icon-btn" data-forget="${esc(v.id)}" title="Remove">✕</button></div>`;
   }
+  const holdem = v.type === 'holdem';
   const others = v.players.filter((p) => p.seat !== v.you).map((p) => p.name);
   const title = others.length ? `vs ${others.join(', ')}` : 'Waiting for players';
   let status;
   if (v.status === 'lobby') status = `<span class="pill">Lobby · ${v.players.length}/${v.numPlayers}</span>`;
   else if (v.status === 'finished') {
-    const won = v.you !== null && v.players[v.you].side === v.winner;
-    status = `<span class="pill ${won ? 'win' : ''}">${won ? 'You won' : 'Finished'}</span>`;
+    const won = v.you !== null && (holdem ? v.winner === v.you : v.players[v.you].side === v.winner);
+    status = `<span class="pill ${won ? 'win' : ''}">${won ? 'You won' : holdem && v.you !== null ? `Finished ${ordinal(v.players[v.you].place)}` : 'Finished'}</span>`;
   } else if (v.yourTurn) status = `<span class="pill turn">Your turn</span>`;
   else {
     const waiting = v.players.filter((p) => p.isTurn).map((p) => p.name);
     status = `<span class="pill">Waiting on ${esc(waiting.join(', '))}</span>`;
   }
-  const scores = v.status === 'lobby' ? '' : `<span class="row-scores">${v.scores
-    .map((s, i) => `<span style="--c:${SIDE_COLORS[i]}">${s}</span>`)
-    .join('<i>·</i>')}</span>`;
+  let scores = '';
+  if (v.status !== 'lobby' && holdem && v.you !== null) scores = `<span class="row-scores">${chipsHTML(v.players[v.you].stack)}</span>`;
+  else if (v.status !== 'lobby' && !holdem) {
+    scores = `<span class="row-scores">${v.scores.map((s, i) => `<span style="--c:${SIDE_COLORS[i]}">${s}</span>`).join('<i>·</i>')}</span>`;
+  }
+  const kind = holdem ? `Hold’em · ${v.numPlayers} players` : `Cribbage · ${v.teams ? '2 v 2' : `${v.numPlayers}-player`}`;
   return `<a class="game-row ${v.yourTurn ? 'is-turn' : ''}" href="/g/${v.id}" data-link>
-    <div><b>${esc(title)}</b><small>${v.teams ? '2 v 2' : `${v.numPlayers}-player`} · updated ${timeAgo(v.updatedAt)}</small></div>
+    <div><b>${esc(title)}</b><small>${kind} · updated ${timeAgo(v.updatedAt)}</small></div>
     <div class="row-right">${scores}${status}<button class="icon-btn" data-forget="${v.id}" title="Remove from list">✕</button></div></a>`;
 }
 
@@ -511,6 +573,10 @@ function mountGame(id) {
     starterSeen: null,
     pushSynced: false,
     goShown: new Set(),
+    seenBoard: new Set(),
+    dealtHand: null,
+    raiseTo: null,
+    clockOffset: 0,
     soundOpen: false,
     boardSides: 0,
     alive: true,
@@ -558,6 +624,8 @@ function mountGame(id) {
     G.selected = G.selected.filter((c) => v.hand.includes(c));
     if (!prev || prev.phase !== v.phase || prev.handNo !== v.handNo) G.selected = [];
     if (v.phase === 'pegging' && !v.yourTurn) G.selected = [];
+    if (v.serverNow) G.clockOffset = v.serverNow - Date.now();
+    if (!v.yourTurn || !prev?.yourTurn) G.raiseTo = null; // fresh raise slider for each decision
     notifyIfTurn(v);
     render();
     announce(prev, v);
@@ -579,14 +647,21 @@ function mountGame(id) {
       const later = (fn) => setTimeout(fn, delay);
       const who = e.seat != null ? v.players[e.seat] : null;
       if (e.card) later(() => sfx.card());
-      if (e.kind === 'hand') later(() => sfx.deal(v.numPlayers === 2 ? 6 : 5));
-      if (e.calls?.length && who) {
+      if (e.kind === 'hand') later(() => sfx.deal(v.type === 'holdem' ? Math.min(10, v.numPlayers * 2) : v.numPlayers === 2 ? 6 : 5));
+      if (e.kind === 'street') later(() => sfx.deal(e.street === 'flop' ? 3 : 1));
+      if (e.kind === 'poker-call' || e.kind === 'poker-raise') later(() => sfx.chips());
+      if (e.kind === 'poker-check') later(() => sfx.tick(0));
+      if (e.kind === 'poker-fold') later(() => sfx.card());
+      if (e.kind === 'poker-win') later(() => sfx.score(4));
+      // In Hold'em only the big moments get a callout (not every check and fold).
+      const loud = v.type !== 'holdem' || ['poker-raise', 'poker-win', 'poker-out'].includes(e.kind) || e.calls?.some((c) => c.label.startsWith('All in'));
+      if (e.calls?.length && who && loud) {
         const is31 = e.calls.some((c) => c.label === '31');
         const isGo = e.kind === 'go';
         later(() => {
           if (is31) sfx.thirtyOne();
           else if (isGo) sfx.go();
-          else if (e.points) sfx.score(e.points);
+          else if (e.points && v.type !== 'holdem') sfx.score(e.points);
           callout(who, e.calls, is31);
         });
         delay += 250;
@@ -602,7 +677,7 @@ function mountGame(id) {
   function callout(player, calls, big) {
     const name = player.seat === G.view?.you ? 'You' : player.name;
     const text = calls.map((c) => (c.points ? `${c.label} for ${c.points}` : c.label)).join(' · ');
-    calloutQueue.push({ name, text, color: SIDE_COLORS[player.side], big });
+    calloutQueue.push({ name, text, color: G.view?.type === 'holdem' ? seatColor(player.seat) : SIDE_COLORS[player.side], big });
     if (!calloutBusy) nextCallout();
   }
   function nextCallout() {
@@ -633,7 +708,7 @@ function mountGame(id) {
   }
 
   function notifyIfTurn(v) {
-    document.title = v.yourTurn ? '● Your turn · Cribbage' : 'Cribbage';
+    document.title = v.yourTurn ? '● Your turn · Card Night' : 'Card Night';
     if (v.you !== null && !G.pushSynced && !LOCAL) {
       G.pushSynced = true;
       syncPush();
@@ -699,10 +774,10 @@ function mountGame(id) {
         <li><b>Copy your games link.</b> The Home Screen app starts empty, and this link brings your seats with you.
           <button class="btn" id="ios-copy">Copy my games link</button></li>
         <li>Tap <b>Share</b> <span class="share-glyph">⬆︎</span> in Safari, then <b>Add to Home Screen</b>.</li>
-        <li>Open <b>Cribbage</b> from your Home Screen, paste the link under “Move your games”, open this game and tap <b>🔔</b>.</li>
+        <li>Open <b>Card Night</b> from your Home Screen, paste the link under “Move your games”, open this game and tap <b>🔔</b>.</li>
       </ol>
       <div class="modal-actions"><button class="btn primary" id="ios-done">Got it</button></div></div></div>`;
-    $('#ios-copy').onclick = () => copy(allGamesLink(), 'Copied. Now add Cribbage to your Home Screen.');
+    $('#ios-copy').onclick = () => copy(allGamesLink(), 'Copied. Now add Card Night to your Home Screen.');
     $('#ios-done').onclick = () => {
       ov.innerHTML = '';
       ov.dataset.state = '';
@@ -724,7 +799,7 @@ function mountGame(id) {
     el.innerHTML = `<div class="push-banner">
       <span class="pb-icon">🔔</span>
       <div class="pb-text"><b>Know when it’s your turn</b><span>${avail === 'ios-install'
-        ? 'On iPhone, notifications need Cribbage on your Home Screen.'
+        ? 'On iPhone, notifications need Card Night on your Home Screen.'
         : 'Get a notification on this device, even with the app closed.'}</span></div>
       <button class="btn primary" id="pb-on">${avail === 'ios-install' ? 'Show me how' : 'Turn on'}</button>
       <button class="icon-btn" id="pb-x" title="Not now">✕</button></div>`;
@@ -760,14 +835,23 @@ function mountGame(id) {
     if (v.you === null && v.status === 'lobby') return renderJoin(v);
     renderTopbar(v);
     renderPushBanner(v);
-    renderScores(v);
-    renderBoard(v);
-    const before = snapshotTable();
-    $('#table').innerHTML = v.status === 'lobby' ? lobbyHTML(v) : tableHTML(v);
-    animateTable(before, G.animView, v);
+    const holdem = v.type === 'holdem';
+    if (holdem) {
+      $('#scores').innerHTML = '';
+      $('#board').innerHTML = '';
+      G.boardSides = 0;
+    } else {
+      renderScores(v);
+      renderBoard(v);
+    }
+    const before = holdem ? null : snapshotTable();
+    $('#table').innerHTML = v.status === 'lobby' ? lobbyHTML(v) : holdem ? holdemTableHTML(v, G) : tableHTML(v);
+    if (!holdem) animateTable(before, G.animView, v);
     G.animView = v;
     $('#side').innerHTML = sideHTML(v);
     bindTable(v);
+    if (holdem && v.status !== 'lobby') bindHoldem(v, G, act);
+    tickTimers(v, G.clockOffset);
     renderOverlay(v);
   }
 
@@ -873,7 +957,9 @@ function mountGame(id) {
     const notifOn = pushOn();
     const avail = pushAvailability();
     const showBell = !LOCAL && v.you !== null && (avail === 'ready' || avail === 'ios-install');
-    const meta = v.status === 'lobby' ? 'Lobby' : `Hand ${v.handNo} · ${esc(v.players[v.dealer].name)} deals`;
+    const meta = v.status === 'lobby' ? `${gameName(v)} · Lobby`
+      : v.type === 'holdem' ? `Hold’em · Hand ${v.handNo} · Blinds ${v.sb.toLocaleString()}/${v.bb.toLocaleString()}`
+      : `Hand ${v.handNo} · ${esc(v.players[v.dealer].name)} deals`;
     $('#topbar').innerHTML = `${brand}
       <div class="top-meta">${meta}</div>
       <div class="top-actions">
@@ -950,8 +1036,8 @@ function mountGame(id) {
     $('#table').innerHTML = `
       <form class="panel join" id="join">
         <div class="join-cards">${cardHTML('JH', { cls: 'tilt-l' })}${cardHTML('5S')}${cardHTML('5D', { cls: 'tilt-r' })}</div>
-        <h1>You’re invited to cribbage</h1>
-        <p class="muted">${esc(v.players.map((p) => p.name).join(', '))} ${v.players.length === 1 ? 'is' : 'are'} waiting · ${v.players.length}/${v.numPlayers} players</p>
+        <h1>You’re invited to ${v.type === 'holdem' ? 'Texas Hold’em' : 'cribbage'}</h1>
+        <p class="muted">${esc(v.players.map((p) => p.name).join(', '))} ${v.players.length === 1 ? 'is' : 'are'} waiting · ${v.players.length}/${v.numPlayers} players${v.type === 'holdem' ? ` · ${v.settings.startingStack.toLocaleString()} chips, blinds ${v.sb}/${v.bb}` : ''}</p>
         ${full ? '<p>This game is full.</p>' : `
         <label class="field"><span>Your name</span><input name="name" maxlength="20" required autocomplete="nickname" value="${esc(local.read().name)}" placeholder="e.g. Alex"></label>
         <button class="btn primary big" type="submit">Take a seat</button>`}
@@ -977,19 +1063,32 @@ function mountGame(id) {
     const link = `${location.origin}/g/${id}`;
     const seats = Array.from({ length: v.numPlayers }, (_, i) => {
       const p = v.players[i];
+      if (v.type === 'holdem') {
+        return p
+          ? `<li class="seat-row filled"><span class="avatar" style="--c:${seatColor(i)}">${esc(p.name[0].toUpperCase())}</span><b>${esc(p.name)}${p.bot ? ' 🤖' : ''}${p.seat === v.you ? ' <span class="muted">(you)</span>' : ''}</b>${i === 0 ? '<span class="team" style="--c:var(--gold)">Host</span>' : ''}</li>`
+          : '<li class="seat-row"><span class="avatar empty">?</span><span class="muted">Open seat</span></li>';
+      }
       const team = v.teams ? `<span class="team" style="--c:${SIDE_COLORS[i % 2]}">Team ${i % 2 ? 'B' : 'A'}</span>` : '';
       return p
         ? `<li class="seat-row filled"><span class="avatar" style="--c:${SIDE_COLORS[v.teams ? i % 2 : i]}">${esc(p.name[0].toUpperCase())}</span><b>${esc(p.name)}${p.bot ? ' 🤖' : ''}${p.seat === v.you ? ' <span class="muted">(you)</span>' : ''}</b>${team}</li>`
         : `<li class="seat-row"><span class="avatar empty">?</span><span class="muted">Open seat</span>${team}</li>`;
     }).join('');
+    const holdem = v.type === 'holdem';
+    const st = v.settings;
     return `
       <div class="panel lobby">
-        <h2>Waiting for ${v.numPlayers - v.players.length} more player${v.numPlayers - v.players.length > 1 ? 's' : ''}</h2>
-        <p class="muted">Send this link to your friends. The game starts automatically once every seat is taken.</p>
+        <h2>${holdem ? `Texas Hold’em · ${v.players.length} of ${v.numPlayers} seated` : `Waiting for ${v.numPlayers - v.players.length} more player${v.numPlayers - v.players.length > 1 ? 's' : ''}`}</h2>
+        <p class="muted">${holdem
+          ? `${st.startingStack.toLocaleString()} chips each · blinds ${st.smallBlind}/${st.bigBlind}${st.levelHands ? `, doubling every ${st.levelHands} hands` : ''} · ${st.actionSeconds}s to act. Send the link; ${v.you === 0 ? 'you can start' : 'the host can start'} once 2 or more are seated, or it starts when every seat fills.`
+          : 'Send this link to your friends. The game starts automatically once every seat is taken.'}</p>
         <div class="invite-box"><input readonly value="${esc(link)}" id="invite-link"><button class="btn primary" id="copy-invite">Copy</button>
           ${navigator.share ? '<button class="btn ghost" id="share-invite">Share</button>' : ''}</div>
         <ul class="seats">${seats}</ul>
-        <button class="btn" id="fill-bots">🤖 Fill empty seats with bots</button>
+        <div class="lobby-actions">
+          ${holdem ? '<button class="btn" id="add-bot">🤖 Add a bot</button>' : ''}
+          <button class="btn" id="fill-bots">🤖 Fill empty seats with bots</button>
+          ${holdem && v.you === 0 ? `<button class="btn primary" id="start-now" ${v.players.length < 2 ? 'disabled' : ''}>Start now with ${v.players.length}</button>` : ''}
+        </div>
         ${v.teams ? '<p class="hint">Seats 1 &amp; 3 play Team A against seats 2 &amp; 4 (Team B), in join order.</p>' : ''}
       </div>`;
   }
@@ -1176,8 +1275,12 @@ function mountGame(id) {
     if (ci) ci.onclick = () => copy(`${location.origin}/g/${id}`, 'Invite link copied');
     const fb = $('#fill-bots');
     if (fb) fb.onclick = () => act('bots');
+    const ab = $('#add-bot');
+    if (ab) ab.onclick = () => act('bots', { count: 1 });
+    const sn = $('#start-now');
+    if (sn) sn.onclick = () => act('start');
     const si = $('#share-invite');
-    if (si) si.onclick = () => navigator.share({ title: 'Join my cribbage game', url: `${location.origin}/g/${id}` }).catch(() => {});
+    if (si) si.onclick = () => navigator.share({ title: `Join my ${gameName(v)} game`, url: `${location.origin}/g/${id}` }).catch(() => {});
 
     for (const t of app.querySelectorAll('[data-tab]')) {
       t.onclick = () => {
@@ -1192,7 +1295,7 @@ function mountGame(id) {
   function sideHTML(v) {
     const tabs = `<div class="tabs"><button data-tab="activity" class="${G.tab === 'activity' ? 'on' : ''}">Activity</button>
       <button data-tab="last" class="${G.tab === 'last' ? 'on' : ''}" ${v.lastHand ? '' : 'disabled'}>Last hand</button></div>`;
-    if (G.tab === 'last' && v.lastHand) return tabs + `<div class="side-body">${lastHandHTML(v)}</div>`;
+    if (G.tab === 'last' && v.lastHand) return tabs + `<div class="side-body">${v.type === 'holdem' ? holdemLastHandHTML(v) : lastHandHTML(v)}</div>`;
     let hand = null;
     const items = [...v.log].reverse().map((e) => {
       const sep = e.hand !== hand ? (hand = e.hand, `<li class="log-sep">${e.hand ? `Hand ${e.hand}` : 'Setup'}</li>`) : '';
@@ -1231,9 +1334,42 @@ function mountGame(id) {
   }
 
   // --- overlays --------------------------------------------------------------
+  function renderHoldemOverlay(v, ov) {
+    if (v.status !== 'finished') {
+      if (ov.dataset.state?.startsWith('over-')) ov.innerHTML = '';
+      if (ov.dataset.state !== 'ios-help') ov.dataset.state = '';
+      return;
+    }
+    if (ov.dataset.state === `over-${v.version}`) return;
+    ov.dataset.state = `over-${v.version}`;
+    const won = v.you === v.winner;
+    ov.innerHTML = `<div class="modal-bg"><div class="modal panel over">
+      <div class="trophy">${won ? '🏆' : '♠'}</div>
+      <h2>${won ? 'You won the tournament!' : `${esc(v.players[v.winner].name)} wins`}</h2>
+      <p class="muted">${v.handNo} hands · blinds reached ${v.sb.toLocaleString()}/${v.bb.toLocaleString()}</p>
+      ${holdemOverHTML(v)}
+      <div class="modal-actions">
+        ${v.you !== null ? `<button class="btn primary big" id="rematch">${v.nextGameId ? 'Go to rematch' : 'Rematch'}</button>` : ''}
+        <button class="btn ghost" id="close-ov">View table</button></div></div></div>`;
+    $('#close-ov').onclick = () => (ov.innerHTML = '');
+    const r = $('#rematch');
+    if (r) {
+      r.onclick = async () => {
+        try {
+          const { id: next } = await api(`/games/${id}/rematch`, { method: 'POST', gameId: id });
+          local.remember(next, local.token(id));
+          go(`/g/${next}`);
+        } catch (err) {
+          toast(err.message);
+        }
+      };
+    }
+  }
+
   function renderOverlay(v) {
     const ov = $('#overlay');
     const seen = local.read().seenHands[id] || 0;
+    if (v.type === 'holdem') return renderHoldemOverlay(v, ov);
     if (v.status === 'finished') {
       const won = v.you !== null && v.players[v.you].side === v.winner;
       const losers = v.scores.map((s, i) => [s, i]).filter(([, i]) => i !== v.winner);
@@ -1311,13 +1447,15 @@ function mountGame(id) {
   connect();
   refresh();
   const poll = setInterval(refresh, 30_000); // safety net if the event stream drops silently
+  const timerTick = setInterval(() => tickTimers(G.view, G.clockOffset), 250);
   const onVis = () => !document.hidden && refresh();
   document.addEventListener('visibilitychange', onVis);
-  const onResize = () => G.view && G.view.status !== 'lobby' && G.view.you !== null && renderBoard(G.view);
+  const onResize = () => G.view && G.view.type !== 'holdem' && G.view.status !== 'lobby' && G.view.you !== null && renderBoard(G.view);
   window.addEventListener('resize', onResize);
 
   return () => {
     G.alive = false;
+    clearInterval(timerTick);
     es?.close();
     clearInterval(poll);
     document.removeEventListener('visibilitychange', onVis);

@@ -5,7 +5,7 @@ import {
   discard, play, autoStep, peekStep, effectiveTurn, STEP_DELAY, randomInt,
 } from './engine.js';
 
-export const BOT_NAMES = ['Botley', 'Ada', 'Pegsy', 'Muggins'];
+export const BOT_NAMES = ['Botley', 'Ada', 'Pegsy', 'Muggins', 'Lucky', 'Rivers', 'Chip', 'Dot'];
 
 function combos(arr, k, start = 0, acc = [], out = []) {
   if (acc.length === k) out.push([...acc]);

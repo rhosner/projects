@@ -1,4 +1,20 @@
-# Cribbage
+# Card Night
+
+Card games for friends: **cribbage** you can play on your own time, and **Texas Hold'em** for playing live. Pick the game when you create one; invites, notifications, sound and the leaderboard work the same for both. (Thirty-One is planned.)
+
+## Texas Hold'em
+
+No-limit tournament for 2–9 players. Everyone starts with the same stack; blinds double every few hands; the last player with chips wins.
+
+- **Defaults** (all adjustable when creating a game): 1,500 chips, blinds 10/20, blinds double every 10 hands, 60 seconds to act (30/60/120). Blinds go up by hand count, not clock time.
+- **Lobby:** the host can **Start now** once 2+ players are seated (the game also starts when every seat fills). Add bots one at a time or fill every seat.
+- **Timer:** when time runs out you check if you can, otherwise fold. Two timeouts in a row marks you away (auto-acts after a few seconds) until you act again.
+- **Rules:** heads-up blinds (button posts the small blind, acts first preflop), minimum raise = last full raise, all-ins smaller than a full raise don't reopen betting, side pots split by all-in level, odd chips to the first winner left of the button.
+- **Bots** rate preflop hands with the Chen formula and estimate post-flop equity by simulation against the price of calling. Fine for filling seats; not strong.
+- **Leaderboard:** separate tab. Winning a tournament beats everyone at the table.
+
+## Cribbage
+
 
 Turn-based cribbage for 2–4 friends. Every game is saved on the server, so anyone can open their link at any time, make their play if it's their turn, and leave.
 

@@ -1,6 +1,7 @@
 // Web Push: VAPID keys, subscription storage, and "it's your turn" notifications.
 import webpush from 'web-push';
 import { isTurn, sideOf } from './engine.js';
+import { holdemIsTurn, options as holdemOptions } from './holdem.js';
 
 /**
  * Decide who should hear about a state change.
@@ -8,6 +9,7 @@ import { isTurn, sideOf } from './engine.js';
  * looking at the screen, so they never get pinged).
  */
 export function turnNotifications(before, after, actorSeat) {
+  if (after.type === 'holdem') return holdemNotifications(before, after, actorSeat);
   const out = [];
   const names = after.players.map((p) => p.name);
   const others = (seat) => names.filter((_, i) => i !== seat).join(', ');
@@ -43,6 +45,42 @@ export function turnNotifications(before, after, actorSeat) {
     }
     out.push({ seat, title: 'Your turn in cribbage', body });
   }
+  return out;
+}
+
+function holdemNotifications(before, after, actorSeat) {
+  const out = [];
+  if (after.status === 'finished' && before.status !== 'finished') {
+    const w = after.players[after.winner];
+    after.players.forEach((p, seat) => {
+      if (seat === actorSeat || p.bot) return;
+      out.push({
+        seat,
+        title: seat === after.winner ? 'You won the Hold’em tournament! 🏆' : 'Hold’em tournament over',
+        body: `${w.name} took every chip.`,
+      });
+    });
+    return out;
+  }
+  if (before.status === 'lobby' && after.status === 'playing') {
+    after.players.forEach((p, seat) => {
+      if (seat !== actorSeat && !p.bot && !holdemIsTurn(after, seat)) {
+        out.push({ seat, title: 'Hold’em is starting', body: `${after.players.length} players, blinds ${after.sb}/${after.bb}.` });
+      }
+    });
+  }
+  after.players.forEach((p, seat) => {
+    if (seat === actorSeat || p.bot) return;
+    const was = before.status === 'playing' && holdemIsTurn(before, seat);
+    if (!holdemIsTurn(after, seat) || was) return;
+    const o = holdemOptions(after, seat);
+    const secs = after.settings.actionSeconds;
+    out.push({
+      seat,
+      title: 'Your turn in Hold’em',
+      body: `${o.canCheck ? 'Check or bet.' : `${o.toCall.toLocaleString('en-US')} to call.`} You have ${secs} seconds.`,
+    });
+  });
   return out;
 }
 

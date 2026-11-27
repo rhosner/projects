@@ -18,12 +18,17 @@ const copies = {
   'engine.js': 'src/engine.js',
   'bot.js': 'src/bot.js',
   'stats.js': 'src/stats.js',
+  'games.js': 'src/games.js',
+  'holdem.js': 'src/holdem.js',
+  'holdem-bot.js': 'src/holdem-bot.js',
+  'poker-hands.js': 'src/poker-hands.js',
+  'holdem-ui.js': 'public/holdem-ui.js',
   'local-backend.js': 'demo/local-backend.js',
 };
 for (const [to, from] of Object.entries(copies)) copyFileSync(join(root, from), join(out, to));
 
 const css = readFileSync(join(root, 'public/styles.css'), 'utf8');
-writeFileSync(join(out, 'index.html'), `<title>Cribbage Table</title>
+writeFileSync(join(out, 'index.html'), `<title>Card Night</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta charset="utf-8">
 <meta name="theme-color" content="#07110d">

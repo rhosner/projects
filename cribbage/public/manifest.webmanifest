@@ -1,7 +1,7 @@
 {
-  "name": "Cribbage",
-  "short_name": "Cribbage",
-  "description": "Turn-based cribbage with your friends.",
+  "name": "Card Night",
+  "short_name": "Card Night",
+  "description": "Cribbage and Texas Hold’em with your friends.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

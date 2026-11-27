@@ -39,6 +39,7 @@ a { color: inherit; }
 .small { font-size: 12px; }
 .center { text-align: center; }
 .hidden { display: none !important; }
+[hidden] { display: none !important; } /* layout rules (e.g. .field's grid) must not un-hide elements */
 h1, h2 { font-family: var(--serif); font-weight: 600; letter-spacing: -0.01em; }
 h2 { font-size: 20px; margin: 0 0 14px; }
 
@@ -474,6 +475,92 @@ h2 { font-size: 20px; margin: 0 0 14px; }
 .h2h b { font-variant-numeric: tabular-nums; }
 .leaders .hint { margin-top: 14px; }
 @media (max-width: 760px) { .board-panel { margin: 0 16px; padding: 16px; } .lb th:nth-child(5), .lb td:nth-child(5) { display: none; } }
+
+/* ---------- game picker & options ---------- */
+.game-pick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 18px; }
+.game-pick button {
+  display: grid; justify-items: start; gap: 2px; text-align: left; padding: 12px; border-radius: 14px; cursor: pointer;
+  border: 1px solid var(--line); background: rgba(0,0,0,.2); transition: border-color .2s, background .2s;
+}
+.game-pick button b { font-size: 14px; }
+.game-pick button small { font-size: 11.5px; color: var(--muted); }
+.game-pick .gp-icon { font-family: var(--serif); font-size: 20px; color: var(--accent); font-weight: 700; line-height: 1; margin-bottom: 4px; }
+.game-pick button[aria-checked="true"] { border-color: var(--accent); background: rgba(62,224,161,.08); box-shadow: inset 0 0 0 1px var(--accent); }
+.game-pick button:disabled { opacity: .45; cursor: not-allowed; }
+.opt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+.opt-grid .field { margin-bottom: 12px; }
+.field select, .field input[type=number] {
+  background: rgba(0,0,0,.25); border: 1px solid var(--line-2); border-radius: 12px; padding: 11px 12px; color: var(--text); outline: none; width: 100%;
+}
+.field select:focus, .field input[type=number]:focus { border-color: var(--accent); }
+.game-opts .hint { display: block; margin-bottom: 16px; }
+.lobby-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.lb-tabs { max-width: 420px; margin-top: 18px; border: 1px solid var(--line); border-radius: 12px; padding: 4px; }
+
+/* ---------- Hold'em ---------- */
+.chips { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; font-weight: 700; font-size: 13px; }
+.chip {
+  width: 14px; height: 14px; border-radius: 50%; flex: none; display: inline-block;
+  background: radial-gradient(circle, var(--chip) 0 38%, #fff 39% 46%, var(--chip) 47%);
+  box-shadow: 0 0 0 1.5px rgba(255,255,255,.85) inset, 0 1px 2px rgba(0,0,0,.6);
+  border: 1.5px dashed rgba(255,255,255,.75);
+}
+.chip.lg { width: 20px; height: 20px; }
+.pk-opponents { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+.pk-seat { position: relative; gap: 8px; }
+.pk-seat .seat-name { gap: 3px; }
+.pk-seat.dim { opacity: .5; }
+.pk-seat.winner { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold), 0 0 30px -10px var(--gold); }
+.pk-tags { margin-left: auto; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.pk-tags .dealer { margin-left: 0; }
+.blind-tag { font-size: 10px; font-weight: 800; letter-spacing: .05em; padding: 3px 6px; border-radius: 6px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); }
+.pk-cards { display: flex; align-items: center; gap: 4px; min-height: 37px; }
+.pk-cards .card.xs { margin-left: -12px; }
+.pk-cards .card.xs:first-child { margin-left: 0; }
+.pk-status { font-size: 12px; font-weight: 700; color: var(--muted); margin-left: 6px; }
+.pk-status.hot { color: var(--gold); }
+.pk-best { font-size: 12.5px; color: var(--text); }
+.pk-best b { color: var(--gold); }
+.pk-bet {
+  position: absolute; right: 12px; bottom: -11px; display: inline-flex; align-items: center; gap: 5px; z-index: 2;
+  padding: 3px 9px 3px 4px; border-radius: 999px; background: #0b1a14; border: 1px solid var(--line-2); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.pk-bet.inline { position: static; }
+.timer { height: 4px; border-radius: 4px; background: rgba(255,255,255,.08); overflow: hidden; }
+.timer-bar { display: block; height: 100%; width: 100%; background: var(--c, var(--accent)); transition: width .25s linear; }
+.timer.low .timer-bar { background: var(--danger); }
+.timer.mine { margin-top: 2px; }
+.pk-felt { padding: 22px 16px; }
+.pk-center { display: grid; justify-items: center; gap: 14px; }
+.pk-board { display: flex; gap: 8px; }
+.pk-board .card.flip-in { animation: flip-in .55s cubic-bezier(.3, 1.4, .5, 1) both; }
+.pk-pot { display: grid; justify-items: center; gap: 2px; }
+.pk-pot span { font-size: 10px; text-transform: uppercase; letter-spacing: .14em; color: rgba(233,242,238,.6); }
+.pk-pot b { display: inline-flex; align-items: center; gap: 8px; font-family: var(--serif); font-size: 26px; font-variant-numeric: tabular-nums; }
+.pk-pot small { font-size: 12px; color: rgba(233,242,238,.6); }
+.pk-me .me-head { flex-wrap: wrap; }
+.pk-hand .pk-hole { --card-w: 90px; margin: 0 -4px; }
+.pk-hole.deal-in { animation: deal-in .5s calc(var(--i) * 120ms) cubic-bezier(.2, 1.2, .5, 1) both; }
+.pk-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+.btn.danger-ghost { background: transparent; border-color: rgba(255,107,107,.45); color: #ffb4b4; }
+.btn.danger-ghost:hover:not(:disabled) { background: rgba(255,107,107,.1); }
+.pk-raise { display: grid; grid-template-columns: 1fr 110px; gap: 10px; align-items: center; }
+.pk-presets { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; }
+.pill-btn { border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text); border-radius: 999px; padding: 6px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.pill-btn:hover { border-color: var(--accent); }
+#pk-slider { width: 100%; accent-color: var(--accent); }
+#pk-amount { background: rgba(0,0,0,.3); border: 1px solid var(--line-2); border-radius: 10px; padding: 9px 10px; color: var(--text); font-variant-numeric: tabular-nums; width: 100%; }
+.pk-last .pk-mini-board { display: flex; gap: 3px; }
+.pk-last .show-cards .muted { margin-left: 8px; }
+@media (max-width: 760px) {
+  .game .brand span:last-child { display: none; } /* logo only in the game's crowded top bar */
+  .game-pick { grid-template-columns: 1fr 1fr; }
+  .game-pick button:disabled { grid-column: 1 / -1; }
+  .pk-opponents { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pk-board { gap: 5px; }
+  .pk-board .card.md { --w: 52px; }
+  .pk-hand .pk-hole { --card-w: 72px; }
+}
 
 /* ---------- push ---------- */
 .push-banner {
