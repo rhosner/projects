@@ -762,10 +762,100 @@ function mountGame(id) {
     renderPushBanner(v);
     renderScores(v);
     renderBoard(v);
+    const before = snapshotTable();
     $('#table').innerHTML = v.status === 'lobby' ? lobbyHTML(v) : tableHTML(v);
+    animateTable(before, G.animView, v);
+    G.animView = v;
     $('#side').innerHTML = sideHTML(v);
     bindTable(v);
     renderOverlay(v);
+  }
+
+  // --- card motion -------------------------------------------------------------
+  // The table is redrawn on every update, so motion is done "FLIP" style: note
+  // where cards were before the redraw, then animate the new ones from there.
+  const calm = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const rectOf = (el) => (el ? el.getBoundingClientRect() : null);
+
+  function snapshotTable() {
+    const hand = new Map();
+    for (const el of document.querySelectorAll('.me .hand-card')) hand.set(el.dataset.card, rectOf(el));
+    const seats = new Map();
+    for (const el of document.querySelectorAll('.seat[data-seat]')) seats.set(Number(el.dataset.seat), rectOf(el.querySelector('.seat-cards .card') || el.querySelector('.seat-cards')));
+    const pile = [...document.querySelectorAll('.pile .pile-card')].map((el) => ({ html: el.outerHTML, rect: rectOf(el) }));
+    return { hand, seats, pile };
+  }
+
+  /** Glide `el` from the rectangle `from` to where it now sits. */
+  function flyFrom(el, from, { delay = 0, duration = 420, fade = 0.5 } = {}) {
+    if (!from) return;
+    const to = el.getBoundingClientRect();
+    const dx = from.left + from.width / 2 - (to.left + to.width / 2);
+    const dy = from.top + from.height / 2 - (to.top + to.height / 2);
+    const scale = Math.min(1.2, Math.max(0.35, from.width / to.width));
+    el.animate(
+      [{ transform: `translate(${dx}px, ${dy}px) scale(${scale})`, opacity: fade }, { transform: 'none', opacity: 1 }],
+      { duration, delay, easing: 'cubic-bezier(.2, .8, .25, 1)', fill: 'backwards' },
+    );
+  }
+
+  function animateTable(snap, prev, v) {
+    const handEls = [...document.querySelectorAll('.me .hand-card')];
+    const deal = document.querySelector('.hand.deal');
+    if (deal) deal.classList.remove('deal'); // motion below replaces the CSS fallback
+    if (!prev || calm() || v.status === 'lobby') return;
+    const sameHand = prev.handNo === v.handNo;
+    const deck = rectOf(document.querySelector('.deck .card'));
+
+    // New hand: cards slide in from the deck, one after another.
+    if (!sameHand && v.phase === 'discard') {
+      handEls.forEach((el, i) => flyFrom(el, deck, { delay: 120 + i * 70, duration: 460, fade: 0 }));
+      document.querySelectorAll('.seat-cards .card').forEach((el, i) => flyFrom(el, deck, { delay: i * 45, duration: 380, fade: 0 }));
+      return;
+    }
+    if (!sameHand) return;
+
+    // A played card glides from the hand it came from to the pile.
+    const before = prev.pegging?.history.length ?? 0;
+    const played = v.pegging?.history.slice(before) ?? [];
+    for (const h of played) {
+      const el = [...document.querySelectorAll('.pile .pile-card')].find((x) => x.querySelector(`.card[data-card="${h.card}"]`));
+      if (!el) continue;
+      el.classList.remove('enter');
+      el.classList.add('flown');
+      flyFrom(el, h.seat === v.you ? snap.hand.get(h.card) : snap.seats.get(h.seat), { fade: h.seat === v.you ? 1 : 0.3 });
+    }
+
+    // A pile cleared after a 31 or a go fades off instead of vanishing.
+    if (prev.pegging?.pile.length && v.pegging && v.pegging.pile.length < prev.pegging.pile.length && snap.pile.length) {
+      const layer = document.createElement('div');
+      layer.className = 'sweep-layer';
+      for (const { html, rect } of snap.pile) {
+        const ghost = document.createElement('div');
+        ghost.innerHTML = html;
+        const card = ghost.firstElementChild;
+        card.classList.remove('enter', 'flown');
+        Object.assign(card.style, { position: 'fixed', left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, margin: 0 });
+        layer.append(card);
+      }
+      document.body.append(layer);
+      layer.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-18px) scale(.94)' }], {
+        duration: 450, easing: 'ease-in', fill: 'forwards',
+      }).onfinish = () => layer.remove();
+    }
+
+    // Discards slide over to the crib.
+    if (v.phase !== 'lobby' && v.cribCount > prev.cribCount) {
+      const origins = [];
+      v.players.forEach((p, i) => {
+        if (p.discarded && !prev.players[i]?.discarded) {
+          if (i === v.you) for (const c of prev.hand.filter((c) => !v.hand.includes(c))) origins.push(snap.hand.get(c));
+          else for (let k = 0; k < v.discardCount; k++) origins.push(snap.seats.get(i));
+        }
+      });
+      const crib = [...document.querySelectorAll('.crib-stack .card')].slice(-origins.length);
+      crib.forEach((el, k) => flyFrom(el, origins[k], { delay: k * 60, fade: 0.4 }));
+    }
   }
 
   function soundMenuHTML() {
@@ -944,7 +1034,7 @@ function mountGame(id) {
       else if (v.phase === 'pegging') note = p.isTurn ? 'Thinking…' : '';
     }
     const backs = Array.from({ length: p.cardCount }, () => backHTML('xs')).join('');
-    return `<div class="seat ${p.isTurn ? 'turn' : ''}" style="--c:${color}">
+    return `<div class="seat ${p.isTurn ? 'turn' : ''}" data-seat="${p.seat}" style="--c:${color}">
       <div class="seat-head"><span class="avatar" style="--c:${color}">${esc(p.name[0].toUpperCase())}</span>
         <div class="seat-name"><b>${esc(p.name)}${p.bot ? ' <span class="bot-tag">BOT</span>' : ''}</b>${team}</div>
         ${p.saidGo && v.phase === 'pegging' ? goBadge(p) : ''}

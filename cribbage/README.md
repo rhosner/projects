@@ -70,7 +70,9 @@ Push needs HTTPS, except on `localhost`, where it works too: your server sends e
 
 You need **a host with a persistent disk**. Games live in a SQLite file, so a host that wipes the filesystem on every restart or deploy will wipe your games too. Render's free tier, Vercel and Netlify all fall into that category.
 
-**Fly.io** (config included):
+**Automatic deploys:** `.github/workflows/deploy-cribbage.yml` runs the tests and, if they pass, deploys to Fly whenever a change under `cribbage/` is merged to `master` (or when run by hand from the Actions tab). It needs a repository secret named `FLY_API_TOKEN`, created with `fly tokens create deploy -a cribbage-with-friends`.
+
+**Fly.io, first-time setup** (config included):
 
 ```bash
 cd cribbage
