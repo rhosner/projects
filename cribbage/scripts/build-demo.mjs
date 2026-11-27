@@ -14,8 +14,10 @@ const copies = {
   'app.js': 'public/app.js',
   'ui.js': 'public/ui.js',
   'push-client.js': 'public/push-client.js',
+  'sound.js': 'public/sound.js',
   'engine.js': 'src/engine.js',
   'bot.js': 'src/bot.js',
+  'stats.js': 'src/stats.js',
   'local-backend.js': 'demo/local-backend.js',
 };
 for (const [to, from] of Object.entries(copies)) copyFileSync(join(root, from), join(out, to));

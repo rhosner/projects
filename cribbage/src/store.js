@@ -20,8 +20,13 @@ export function openStore(path) {
   const putStmt = db.prepare(
     'INSERT INTO games (id, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at',
   );
+  const finishedStmt = db.prepare("SELECT data FROM games WHERE json_extract(data, '$.status') = 'finished'");
   return {
     db,
+    /** Every finished game, for the leaderboard. */
+    finished() {
+      return finishedStmt.all().map((r) => JSON.parse(r.data));
+    },
     get(id) {
       const row = getStmt.get(id);
       return row ? JSON.parse(row.data) : null;

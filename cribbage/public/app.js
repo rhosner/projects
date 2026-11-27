@@ -1,9 +1,10 @@
 import {
-  SIDE_COLORS, esc, cardHTML, backHTML, miniCards, cardText, sortCards, timeAgo, mountBoard, updateBoard, boardRowsFor,
+  SIDE_COLORS, esc, cardHTML, backHTML, miniCard, miniCards, cardText, displayPrefs, setDisplayPref, cardValue, sortCards, timeAgo, mountBoard, updateBoard, boardRowsFor,
 } from './ui.js';
 import {
   pushAvailability, ensureSubscription, currentSubscription, registerServiceWorker, isStandalone,
 } from './push-client.js';
+import { sfx, soundPrefs, setSoundPref } from './sound.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
@@ -31,14 +32,29 @@ const local = {
   token: (id) => local.read().games[id]?.token,
   remember: (id, token) => local.write((d) => (d.games[id] = { token, addedAt: d.games[id]?.addedAt || Date.now() })),
   forget: (id) => local.write((d) => delete d.games[id]),
+  // A private random key that identifies this person across games, for the leaderboard.
+  playerKey() {
+    let k = local.read().playerKey;
+    if (!k) {
+      k = Array.from(crypto.getRandomValues(new Uint8Array(18)), (b) => b.toString(16).padStart(2, '0')).join('');
+      local.write((d) => (d.playerKey = k));
+    }
+    return k;
+  },
 };
+
+// A device that has no games yet takes on the player key from a link, so the same
+// person keeps one leaderboard record across their phone and computer.
+function adoptPlayerKey(k, hadGames) {
+  if (typeof k === 'string' && /^[0-9a-f]{16,64}$/.test(k) && !hadGames) local.write((d) => (d.playerKey = k));
+}
 
 // A link that carries every seat this browser holds, for moving to another device
 // (or into an iPhone Home Screen app, which doesn't share storage with Safari).
 function allGamesLink() {
   const d = local.read();
   const games = Object.fromEntries(Object.entries(d.games).map(([id, g]) => [id, g.token]));
-  const bytes = new TextEncoder().encode(JSON.stringify({ n: d.name, g: games }));
+  const bytes = new TextEncoder().encode(JSON.stringify({ n: d.name, g: games, k: local.playerKey() }));
   const b64 = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   return `${location.origin}/#i=${b64}`;
 }
@@ -53,8 +69,10 @@ function importLink(text) {
   }
   const hash = new URLSearchParams(url.hash.slice(1));
   const single = url.pathname.match(/^\/g\/([a-z0-9]+)/);
+  const hadGames = Object.keys(local.read().games).length > 0;
   if (single && hash.get('t')) {
     local.remember(single[1], hash.get('t'));
+    adoptPlayerKey(hash.get('k'), hadGames);
     return 1;
   }
   if (hash.get('i')) {
@@ -63,6 +81,7 @@ function importLink(text) {
       const data = JSON.parse(new TextDecoder().decode(Uint8Array.from(raw, (c) => c.charCodeAt(0))));
       const entries = Object.entries(data.g || {}).filter(([id, t]) => /^[a-z0-9]+$/.test(id) && typeof t === 'string');
       for (const [id, token] of entries) local.remember(id, token);
+      adoptPlayerKey(data.k, hadGames);
       if (data.n && !local.read().name) local.write((d) => (d.name = String(data.n).slice(0, 20)));
       return entries.length;
     } catch {
@@ -80,8 +99,8 @@ function importLink(text) {
 const LOCAL = window.CRIB_TRANSPORT || null;
 
 async function api(path, { method = 'GET', body, gameId } = {}) {
-  if (LOCAL) return LOCAL.api(path, { method, body, token: gameId && local.token(gameId) });
-  const headers = { 'Content-Type': 'application/json' };
+  if (LOCAL) return LOCAL.api(path, { method, body, token: gameId && local.token(gameId), playerKey: local.playerKey() });
+  const headers = { 'Content-Type': 'application/json', 'X-Player-Key': local.playerKey() };
   const token = gameId && local.token(gameId);
   if (token) headers['X-Player-Token'] = token;
   const res = await fetch(`/api${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
@@ -121,6 +140,7 @@ function route() {
   teardown();
   teardown = () => {};
   document.title = 'Cribbage';
+  if (currentPath() === '/leaders') return renderLeaders();
   if (LOCAL) {
     const m = currentPath().match(/^\/g\/([a-z0-9]+)/);
     if (m) teardown = mountGame(m[1]);
@@ -130,9 +150,8 @@ function route() {
   const m = location.pathname.match(/^\/g\/([a-z0-9]+)/);
   if (m) {
     // Device links carry the token in the hash so it never hits server logs.
-    const t = new URLSearchParams(location.hash.slice(1)).get('t');
-    if (t) {
-      local.remember(m[1], t);
+    if (new URLSearchParams(location.hash.slice(1)).get('t')) {
+      importLink(location.href);
       history.replaceState(null, '', location.pathname);
     }
     teardown = mountGame(m[1]);
@@ -169,6 +188,72 @@ const brand = `<a href="/" data-link class="brand"><span class="brand-mark">♣<
 // ---------------------------------------------------------------------------
 // Home
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Leaderboard
+// ---------------------------------------------------------------------------
+const pct = (r) => (r == null ? '–' : `${Math.round(r * 100)}%`);
+
+async function renderLeaders() {
+  app.innerHTML = `
+    <div class="home leaders">
+      <header class="topbar">${brand}<div class="top-actions"><a class="btn ghost" href="/" data-link>Your games</a></div></header>
+      <section class="hero slim">
+        <h1>Leaderboard</h1>
+        <p>Every finished game on this ${LOCAL ? 'device' : 'server'}. Tap a player to see how they've done against each opponent.</p>
+      </section>
+      <div class="panel board-panel" id="leaders"><div class="loading"><div class="spinner"></div></div></div>
+    </div>`;
+  let data;
+  try {
+    data = await api('/stats');
+  } catch (err) {
+    $('#leaders').innerHTML = `<p class="muted">Couldn't load the leaderboard: ${esc(err.message)}</p>`;
+    return;
+  }
+  const el = $('#leaders');
+  if (!el) return;
+  const rows = data.players;
+  if (!rows.length) {
+    el.innerHTML = `<div class="empty"><p>No finished games yet. Records show up here once a game reaches 121.</p></div>`;
+    return;
+  }
+  const me = rows.find((p) => p.id === data.you);
+  el.innerHTML = `
+    ${me ? (me.wins + me.losses
+      ? `<div class="my-record"><span>Your record vs people</span><b>${me.wins}–${me.losses}</b>
+        <span class="muted">${pct(me.winRate)} · vs bots ${me.botWins}–${me.botLosses} · ${me.skunks} skunk${me.skunks === 1 ? '' : 's'} given</span></div>`
+      : `<div class="my-record"><span>Your record vs bots</span><b>${me.botWins}–${me.botLosses}</b>
+        <span class="muted">No finished games against people yet · ${me.skunks} skunk${me.skunks === 1 ? '' : 's'} given</span></div>`) : ''}
+    <div class="table-scroll"><table class="lb">
+      <thead><tr><th>#</th><th>Player</th><th title="Wins–losses against people">vs people</th><th>Win %</th><th title="Games against bots">vs bots</th><th title="Skunks given">Skunks</th></tr></thead>
+      <tbody>${rows.map((p, i) => `
+        <tr class="lb-row ${p.id === data.you ? 'is-me' : ''}" data-i="${i}" tabindex="0">
+          <td class="rank">${p.wins + p.losses ? i + 1 : '–'}</td>
+          <td class="who"><b>${esc(p.name)}</b>${p.id === data.you ? ' <span class="pill">You</span>' : ''}<small>last played ${timeAgo(p.lastPlayed)}</small></td>
+          <td class="num"><b>${p.wins}</b>–${p.losses}</td>
+          <td class="num">${pct(p.winRate)}</td>
+          <td class="num muted">${p.botWins}–${p.botLosses}</td>
+          <td class="num">${p.skunks}</td>
+        </tr>
+        <tr class="h2h-row" hidden><td colspan="6"><div class="h2h">
+          <h3>${esc(p.name)} vs…</h3>
+          <ul>${p.opponents.map((o) => `<li><span>${esc(o.name)}${o.bot ? ' <span class="bot-tag">BOT</span>' : ''}</span>
+            <span class="bar ${o.wins + o.losses ? '' : 'none'}"><i style="--w:${o.wins + o.losses ? (o.wins / (o.wins + o.losses)) * 100 : 0}%"></i></span>
+            <b>${o.wins}–${o.losses}</b></li>`).join('') || '<li class="muted">No opponents yet</li>'}</ul>
+        </div></td></tr>`).join('')}
+      </tbody></table></div>
+    <p class="hint">Team games count as a win for both partners. In 3- and 4-player games the winner beats everyone at the table. Records follow each browser's player; use “Move your games to another device” on the home page to keep one record across your phone and computer.</p>`;
+  for (const row of el.querySelectorAll('.lb-row')) {
+    const toggle = () => {
+      const detail = row.nextElementSibling;
+      detail.hidden = !detail.hidden;
+      row.classList.toggle('open', !detail.hidden);
+    };
+    row.onclick = toggle;
+    row.onkeydown = (e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), toggle());
+  }
+}
+
 function renderHome() {
   const data = local.read();
   // Game formats offered on the home screen: [key, label, players, teams]
@@ -176,7 +261,7 @@ function renderHome() {
   let mode = MODES[0];
   app.innerHTML = `
     <div class="home">
-      <header class="topbar">${brand}</header>
+      <header class="topbar">${brand}<div class="top-actions"><a class="btn ghost" href="/leaders" data-link>🏆 Leaderboard</a></div></header>
       <section class="hero">
         <h1>Cribbage with your friends,<br><span class="grad">on your own time.</span></h1>
         <p>Every game saves itself. Make your play, close the tab, and come back when it's your turn again.</p>
@@ -390,6 +475,7 @@ function countThrough(root, onDone) {
       at(() => {
         li.classList.add('shown');
         highlight(sh, li);
+        sfx.tick(lines.indexOf(li));
         sh.querySelector('.say').textContent = `${li.dataset.label} · ${total}`;
         const el = sh.querySelector('.show-total');
         el.textContent = total;
@@ -424,6 +510,8 @@ function mountGame(id) {
     dealtKey: null,
     starterSeen: null,
     pushSynced: false,
+    goShown: new Set(),
+    soundOpen: false,
     boardSides: 0,
     alive: true,
   };
@@ -433,6 +521,7 @@ function mountGame(id) {
       <header class="topbar" id="topbar">${brand}</header>
       <main class="layout">
         <section class="main-col">
+          <div id="callouts" aria-live="polite"></div>
           <div id="push-banner"></div>
           <div class="scores" id="scores"></div>
           <div class="board-wrap" id="board"></div>
@@ -471,6 +560,76 @@ function mountGame(id) {
     if (v.phase === 'pegging' && !v.yourTurn) G.selected = [];
     notifyIfTurn(v);
     render();
+    announce(prev, v);
+  }
+
+  // --- what just happened: sounds and table callouts ---------------------------
+  const logKey = (e) => (e ? `${e.t}|${e.text}` : '');
+  function announce(prev, v) {
+    const log = v.log || [];
+    if (!prev || G.logSeen === undefined) {
+      G.logSeen = logKey(log.at(-1)); // first load: don't replay history
+      return;
+    }
+    const from = log.findIndex((e) => logKey(e) === G.logSeen);
+    const fresh = from === -1 ? log.slice(-3) : log.slice(from + 1);
+    G.logSeen = logKey(log.at(-1));
+    let delay = 0;
+    for (const e of fresh) {
+      const later = (fn) => setTimeout(fn, delay);
+      const who = e.seat != null ? v.players[e.seat] : null;
+      if (e.card) later(() => sfx.card());
+      if (e.kind === 'hand') later(() => sfx.deal(v.numPlayers === 2 ? 6 : 5));
+      if (e.calls?.length && who) {
+        const is31 = e.calls.some((c) => c.label === '31');
+        const isGo = e.kind === 'go';
+        later(() => {
+          if (is31) sfx.thirtyOne();
+          else if (isGo) sfx.go();
+          else if (e.points) sfx.score(e.points);
+          callout(who, e.calls, is31);
+        });
+        delay += 250;
+      }
+    }
+    if (v.yourTurn && !prev.yourTurn) setTimeout(() => sfx.turn(), delay + 150);
+    if (v.status === 'finished' && prev.status !== 'finished') setTimeout(() => sfx.win(), delay + 300);
+  }
+
+  // Big announcements over the felt, queued so each one gets seen.
+  const calloutQueue = [];
+  let calloutBusy = false;
+  function callout(player, calls, big) {
+    const name = player.seat === G.view?.you ? 'You' : player.name;
+    const text = calls.map((c) => (c.points ? `${c.label} for ${c.points}` : c.label)).join(' · ');
+    calloutQueue.push({ name, text, color: SIDE_COLORS[player.side], big });
+    if (!calloutBusy) nextCallout();
+  }
+  function nextCallout() {
+    const c = calloutQueue.shift();
+    const layer = $('#callouts');
+    const felt = $('.felt');
+    if (!c || !layer || !felt) {
+      calloutBusy = false;
+      return;
+    }
+    calloutBusy = true;
+    const col = layer.parentElement.getBoundingClientRect();
+    const r = felt.getBoundingClientRect();
+    // Centered on the felt's top edge, so the pile (and the 31 on it) stays visible.
+    layer.style.top = `${r.top - col.top}px`;
+    const el = document.createElement('div');
+    el.className = `callout ${c.big ? 'big' : ''}`;
+    el.style.setProperty('--c', c.color);
+    el.innerHTML = `<small>${esc(c.name)}</small><b>${esc(c.text)}</b>`;
+    layer.append(el);
+    // One at a time: the next waits until this one has fully left. Shorter when more are waiting.
+    const hold = calloutQueue.length ? 1000 : c.big ? 1900 : 1400;
+    setTimeout(() => el.classList.add('out'), hold);
+    setTimeout(() => {
+      el.remove();
+      nextCallout();
+    }, hold + 320);
   }
 
   function notifyIfTurn(v) {
@@ -609,6 +768,17 @@ function mountGame(id) {
     renderOverlay(v);
   }
 
+  function soundMenuHTML() {
+    const p = soundPrefs();
+    return `<details class="sound-menu" id="sound-menu" ${G.soundOpen ? 'open' : ''}>
+      <summary class="icon-btn" title="Sound and display">${p.sfx || p.music ? '🔊' : '🔇'}</summary>
+      <div class="sound-pop">
+        <label class="switch"><input type="checkbox" data-pref="sfx" ${p.sfx ? 'checked' : ''}><span>Card sounds</span></label>
+        <label class="switch"><input type="checkbox" data-pref="music" ${p.music ? 'checked' : ''}><span>Background music</span></label>
+        <label class="switch"><input type="checkbox" data-display="fourColor" ${displayPrefs().fourColor ? 'checked' : ''}><span>Four-colour suits <small class="muted">♣ green, ♦ blue</small></span></label>
+      </div></details>`;
+  }
+
   function renderTopbar(v) {
     const notifOn = pushOn();
     const avail = pushAvailability();
@@ -617,6 +787,7 @@ function mountGame(id) {
     $('#topbar').innerHTML = `${brand}
       <div class="top-meta">${meta}</div>
       <div class="top-actions">
+        ${soundMenuHTML()}
         ${showBell ? `<button class="icon-btn ${notifOn ? 'bell-on' : ''}" id="notif" title="${notifOn ? 'Notifications on (tap to turn off)' : 'Turn on notifications'}" aria-pressed="${notifOn}">${notifOn ? '🔔' : '🔕'}</button>` : ''}
         ${LOCAL ? '<span class="pill">Demo · runs in your browser</span>' : '<button class="btn ghost" id="invite">Invite</button>'}
         ${v.you !== null && !LOCAL ? `<button class="btn ghost" id="device" title="Open this game as you on another device">Other device</button>` : ''}
@@ -626,13 +797,25 @@ function mountGame(id) {
     if (dev) {
       dev.onclick = () => {
         if (confirm('This link signs in as YOU on another device (e.g. your phone). Don’t share it with anyone else. Copy it?')) {
-          copy(`${location.origin}/g/${id}#t=${local.token(id)}`, 'Personal link copied');
+          copy(`${location.origin}/g/${id}#t=${local.token(id)}&k=${local.playerKey()}`, 'Personal link copied');
         }
       };
     }
     const n = $('#notif');
     if (n) {
       n.onclick = () => (pushOn() ? disablePush() : enablePush());
+    }
+    const menu = $('#sound-menu');
+    menu.ontoggle = () => (G.soundOpen = menu.open);
+    for (const box of menu.querySelectorAll('input[data-display]')) {
+      box.onchange = () => setDisplayPref(box.dataset.display, box.checked);
+    }
+    for (const box of menu.querySelectorAll('input[data-pref]')) {
+      box.onchange = () => {
+        setSoundPref(box.dataset.pref, box.checked);
+        if (box.dataset.pref === 'sfx' && box.checked) sfx.card();
+        $('#sound-menu summary').textContent = soundPrefs().sfx || soundPrefs().music ? '🔊' : '🔇';
+      };
     }
   }
 
@@ -733,6 +916,7 @@ function mountGame(id) {
     }
     if (v.phase === 'show') return 'Counting the hands…';
     if (v.phase === 'pegging') {
+      if (v.pegging.clearing) return v.pegging.count === 31 ? '<b>31!</b> Clearing the pile…' : 'Go. Clearing the pile…';
       if (v.players.every((p) => p.cardCount === 0)) return 'That’s every card. Counting the hands…';
       if (v.yourTurn) return `Your play. The count is <b>${v.pegging.count}</b>`;
       if (v.pegging.turn === v.you) {
@@ -743,18 +927,27 @@ function mountGame(id) {
     return '';
   }
 
+  // A big "GO" by a player who can't play. It pops in only the first time it appears.
+  function goBadge(p) {
+    const key = `${G.view.handNo}:${G.view.pegging?.history.length}:${p.seat}`;
+    const fresh = !G.goShown.has(key);
+    G.goShown.add(key);
+    return `<span class="go-badge ${fresh ? 'pop' : ''}">GO</span>`;
+  }
+
   function seatHTML(v, p) {
     const color = SIDE_COLORS[p.side];
     const team = v.teams ? `<span class="team" style="--c:${color}">${v.you !== null && p.side === v.players[v.you].side ? 'Partner' : 'Opponent'}</span>` : '';
     let note = '';
     if (v.status === 'playing') {
       if (v.phase === 'discard') note = p.discarded ? '✓ Ready' : 'Choosing…';
-      else if (v.phase === 'pegging') note = p.isTurn ? 'Thinking…' : p.saidGo ? 'Go' : '';
+      else if (v.phase === 'pegging') note = p.isTurn ? 'Thinking…' : '';
     }
     const backs = Array.from({ length: p.cardCount }, () => backHTML('xs')).join('');
     return `<div class="seat ${p.isTurn ? 'turn' : ''}" style="--c:${color}">
       <div class="seat-head"><span class="avatar" style="--c:${color}">${esc(p.name[0].toUpperCase())}</span>
         <div class="seat-name"><b>${esc(p.name)}${p.bot ? ' <span class="bot-tag">BOT</span>' : ''}</b>${team}</div>
+        ${p.saidGo && v.phase === 'pegging' ? goBadge(p) : ''}
         ${v.dealer === p.seat ? '<span class="dealer" title="Dealer">D</span>' : ''}</div>
       <div class="seat-cards">${backs || '<span class="muted small">No cards</span>'}</div>
       <div class="seat-note">${note}</div></div>`;
@@ -781,7 +974,7 @@ function mountGame(id) {
       G.lastAnimatedPile = hist.map((h) => h.card);
       if (prior.length) {
         earlier = `<div class="earlier"><span class="muted small">Earlier this hand</span><div>${prior
-          .map((h) => `<span class="mini ${'HD'.includes(h.card[1]) ? 'red' : ''}" style="--c:${SIDE_COLORS[v.players[h.seat].side]}">${esc(cardText(h.card))}</span>${h.reset ? '<i class="sep"></i>' : ''}`)
+          .map((h) => `${miniCard(h.card, `style="--c:${SIDE_COLORS[v.players[h.seat].side]}"`)}${h.reset ? '<i class="sep"></i>' : ''}`)
           .join('')}</div></div>`;
       }
     } else {
@@ -826,9 +1019,15 @@ function mountGame(id) {
       const sel = G.selected.includes(c);
       const illegal = canPlay && !v.legal.includes(c);
       const interactive = (canDiscard || (canPlay && !illegal)) && !G.busy;
+      // During your play, hovering (or tapping) a card previews the count it would make.
+      const after = canPlay ? v.pegging.count + cardValue(c) : 0;
+      const peek = canPlay
+        ? `<span class="peek ${illegal ? 'too-high' : ''}">${illegal ? 'Over 31' : `+${cardValue(c)} → <b>${after}</b>`}</span>`
+        : '';
       return cardHTML(c, {
         cls: `hand-card ${sel ? 'selected' : ''} ${illegal ? 'illegal' : ''} ${interactive ? 'interactive' : ''}`,
         attrs: `style="--i:${i};--n:${hand.length}" ${interactive ? 'tabindex="0" role="button"' : ''}`,
+        inner: peek,
       });
     }).join('');
 
@@ -846,7 +1045,7 @@ function mountGame(id) {
 
     return `<div class="me ${v.yourTurn ? 'turn' : ''}" style="--c:${SIDE_COLORS[me.side]}">
       <div class="me-head"><span class="avatar" style="--c:${SIDE_COLORS[me.side]}">${esc(me.name[0].toUpperCase())}</span><b>${esc(me.name)}</b>
-        ${v.dealer === v.you ? '<span class="dealer">D</span>' : ''}${me.saidGo && v.phase === 'pegging' ? '<span class="pill">Go</span>' : ''}</div>
+        ${v.dealer === v.you ? '<span class="dealer">D</span>' : ''}${me.saidGo && v.phase === 'pegging' ? goBadge(me) : ''}</div>
       <div class="hand ${G.dealtKey !== `${v.handNo}` ? 'deal' : ''}">${cards || '<span class="muted">No cards in hand</span>'}</div>
       <div class="actions">${action}</div>
       ${keptNote}

@@ -26,10 +26,14 @@ before(async () => {
 });
 after(() => proc?.kill());
 
-async function call(path, { method = 'GET', body, token } = {}) {
+async function call(path, { method = 'GET', body, token, key } = {}) {
   const res = await fetch(BASE + path, {
     method,
-    headers: { 'Content-Type': 'application/json', ...(token ? { 'X-Player-Token': token } : {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'X-Player-Token': token } : {}),
+      ...(key ? { 'X-Player-Key': key } : {}),
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: res.status, data: await res.json() };
@@ -135,4 +139,28 @@ test('4-player game over HTTP, with auth checks and rematch', async () => {
   const next = await call(`/api/games/${re1.data.id}`, { token: tokens[3] });
   assert.equal(next.data.status, 'playing');
   assert.equal(next.data.you, 3, 'same seat, same token');
+});
+
+test('leaderboard: a finished game is credited to the player who played it', async () => {
+  // Created without a player key, like a game from before keys existed.
+  const created = await call('/api/games', { method: 'POST', body: { name: 'Zed', numPlayers: 2 } });
+  const { id, token } = created.data;
+  await call(`/api/games/${id}/bots`, { method: 'POST', token });
+  const key = 'zed-private-key';
+  let v;
+  for (let guard = 0; guard < 6000; guard++) {
+    v = (await call(`/api/games/${id}`, { token, key })).data; // opening the game claims the seat
+    if (v.status === 'finished') break;
+    if (v.yourTurn && v.phase === 'discard') await call(`/api/games/${id}/discard`, { method: 'POST', body: { cards: v.hand.slice(0, 2) }, token });
+    else if (v.yourTurn && v.legal.length > 1) await call(`/api/games/${id}/play`, { method: 'POST', body: { card: v.legal[0] }, token });
+    else await new Promise((r) => setTimeout(r, 3));
+  }
+  assert.equal(v.status, 'finished');
+  const stats = (await call('/api/stats', { key })).data;
+  const me = stats.players.find((p) => p.id === stats.you);
+  assert.ok(me, 'my row exists');
+  assert.equal(me.name, 'Zed');
+  assert.equal(me.botWins + me.botLosses, 1, 'counted as a game against a bot');
+  assert.ok(!JSON.stringify(stats).includes(key), 'the private key never appears');
+  assert.equal((await call('/api/stats')).data.you, null);
 });

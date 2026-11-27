@@ -7,7 +7,15 @@ Turn-based cribbage for 2–4 friends. Every game is saved on the server, so any
 - **4 players**: everyone for themselves, 5 cards each, 1 to the crib
 - **2 v 2**: two teams of two (seats 1 & 3 vs 2 & 4), 5 cards each, 1 to the crib
 
-Scoring is automatic: fifteens, pairs, runs, flushes (crib flushes need all 5 cards), nobs, his heels, go, last card and 31. After each hand the results screen counts every hand out one scoring line at a time, lighting up the cards behind each line ("Fifteen · 2, Fifteen · 4, Pair · 6"); Skip finishes it instantly. Afterwards, hover or tap any line, there or in the "Last hand" tab, to see its cards again.
+Scoring is automatic: fifteens, pairs, runs, flushes (crib flushes need all 5 cards), nobs, his heels, go, last card and 31. During pegging, every score is announced on the table ("Ada · 31 for 2", "Go for 1"), a 31 or a pile that earned a go stays on the table for a moment before it's cleared, and a player who can't play shows a big **GO**. Hover (or tap) a card on your turn to see the count it would make.
+
+**Sound:** card snaps, a shuffle on the deal, a knock for Go, chimes for points, and a ping when it's your turn, all synthesized in the browser (no audio files). Optional quiet background music, off by default. Both are in the 🔊 menu.
+
+After each hand the results screen counts every hand out one scoring line at a time, lighting up the cards behind each line ("Fifteen · 2, Fifteen · 4, Pair · 6"); Skip finishes it instantly. Afterwards, hover or tap any line, there or in the "Last hand" tab, to see its cards again.
+
+**Leaderboard** (🏆 on the home page): wins and losses against people, win %, record against bots, skunks given, and each player's record against every opponent. Team wins count for both partners; in 3- and 4-player games the winner beats everyone at the table. There are no accounts: each browser gets a private player key, and "Move your games to another device" carries it to your phone so you keep one record. Anyone who can open the site can see the leaderboard.
+
+**Suits** are drawn as shapes (not font characters) so clubs and spades read apart even when small, and a four-colour deck (clubs green, diamonds blue) is on by default; switch it off in the 🔊 menu.
 
 First to 121 wins. The board marks the skunk line (between 90 and 91) and the double-skunk line (between 60 and 61), and skunks are called out at the end.
 

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { openStore } from './store.js';
 import { createPusher, turnNotifications } from './push.js';
 import { nextAutomatic, BOT_NAMES } from './bot.js';
+import { computeStats } from './stats.js';
 import { createGame, addPlayer, startGame, discard, play, viewFor, hasTeams, RuleError } from './engine.js';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -67,6 +68,22 @@ function cleanName(name) {
   const n = String(name ?? '').replace(/\s+/g, ' ').trim().slice(0, 20);
   if (!n) throw new HttpError(400, 'Enter a name');
   return n;
+}
+
+// A browser's private player key (X-Player-Key) identifies the same person across
+// games for the leaderboard. Only a one-way hash of it is stored or shown.
+function playerIdFor(req) {
+  const key = req.headers['x-player-key'];
+  if (!key || String(key).length > 200) return null;
+  return createHash('sha256').update(`player:${key}`).digest('hex').slice(0, 16);
+}
+
+/** Credit a seat to this browser's player if it isn't credited yet (also back-fills old games). */
+function claimSeat(game, seat, req) {
+  const pid = playerIdFor(req);
+  if (seat === null || !pid || game.players[seat].playerId) return;
+  game.players[seat].playerId = pid;
+  store.put(game); // no version bump: nothing players can see changed
 }
 
 function seatFor(game, req) {
@@ -136,7 +153,7 @@ const routes = [
     const name = cleanName(body.name);
     const game = createGame({ id: newGameId(), numPlayers, teams: body.teams !== false });
     const token = newToken();
-    addPlayer(game, { id: randomUUID(), name, tokenHash: hash(token) });
+    addPlayer(game, { id: randomUUID(), name, tokenHash: hash(token), playerId: playerIdFor(req) });
     save(game);
     send(res, 201, { id: game.id, token, seat: 0 });
   }],
@@ -144,7 +161,9 @@ const routes = [
   ['GET', /^\/api\/games\/([a-z0-9]+)$/, async (req, res, [id]) => {
     const game = loadGame(id);
     scheduleBots(id); // resumes paused steps after a server restart
-    send(res, 200, viewFor(game, seatFor(game, req)));
+    const seat = seatFor(game, req);
+    claimSeat(game, seat, req);
+    send(res, 200, viewFor(game, seat));
   }],
 
   ['POST', /^\/api\/games\/([a-z0-9]+)\/join$/, async (req, res, [id]) => {
@@ -158,7 +177,7 @@ const routes = [
     }
     const token = newToken();
     const before = structuredClone(game);
-    const seat = addPlayer(game, { id: randomUUID(), name, tokenHash: hash(token) });
+    const seat = addPlayer(game, { id: randomUUID(), name, tokenHash: hash(token), playerId: playerIdFor(req) });
     save(game, before, seat);
     send(res, 201, { token, seat });
   }],
@@ -236,6 +255,10 @@ const routes = [
     send(res, 200, viewFor(game, seat));
   }],
 
+  ['GET', /^\/api\/stats$/, async (req, res) => {
+    send(res, 200, { you: playerIdFor(req), players: computeStats(store.finished()) });
+  }],
+
   ['GET', /^\/api\/push\/key$/, async (_req, res) => send(res, 200, { publicKey: pusher.publicKey })],
 
   ['POST', /^\/api\/games\/([a-z0-9]+)\/push$/, async (req, res, [id]) => {
@@ -275,7 +298,7 @@ const TYPES = {
 async function serveStatic(req, res) {
   const url = new URL(req.url, 'http://x');
   let path = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
-  if (path === '/' || path.startsWith('/g/')) path = '/index.html';
+  if (path === '/' || path === '/leaders' || path.startsWith('/g/')) path = '/index.html'; // app routes
   const file = join(PUBLIC, path);
   if (!file.startsWith(PUBLIC)) throw new HttpError(404, 'Not found');
   try {
