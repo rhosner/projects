@@ -2,6 +2,7 @@
 // bot as the real server; games live in this browser's localStorage.
 import { createGame, addPlayer, startGame, discard, play, viewFor, hasTeams, RuleError } from './engine.js';
 import { nextAutomatic, BOT_NAMES } from './bot.js';
+import { computeStats } from './stats.js';
 
 const KEY = 'cribbage.demo.games';
 
@@ -60,14 +61,19 @@ function scheduleBots(id) {
 
 const view = (g, seat) => JSON.parse(JSON.stringify(viewFor(g, seat)));
 
-function handle(path, method, body, token) {
+function handle(path, method, body, token, playerKey) {
   let m;
+  // Everything stays in this browser, so the key itself can serve as the player id.
+  const playerId = playerKey || null;
+  if (method === 'GET' && path === '/stats') {
+    return { you: playerId, players: computeStats(Object.values(games)) };
+  }
   if (method === 'POST' && path === '/games') {
     const name = String(body?.name ?? '').trim().slice(0, 20);
     if (!name) fail(400, 'Enter a name');
     const g = createGame({ id: newId(), numPlayers: Number(body.numPlayers), teams: body.teams !== false });
     const t = crypto.randomUUID();
-    addPlayer(g, { id: crypto.randomUUID(), name, tokenHash: t });
+    addPlayer(g, { id: crypto.randomUUID(), name, tokenHash: t, playerId });
     games[g.id] = g;
     save(g);
     return { id: g.id, token: t, seat: 0 };
@@ -75,7 +81,12 @@ function handle(path, method, body, token) {
   if ((m = path.match(/^\/games\/([a-z0-9]+)$/)) && method === 'GET') {
     const g = load(m[1]);
     scheduleBots(g.id);
-    return view(g, seatFor(g, token));
+    const seat = seatFor(g, token);
+    if (seat !== null && playerId && !g.players[seat].playerId) {
+      g.players[seat].playerId = playerId;
+      persist();
+    }
+    return view(g, seat);
   }
   if ((m = path.match(/^\/games\/([a-z0-9]+)\/(bots|discard|play|rematch)$/)) && method === 'POST') {
     const g = load(m[1]);
@@ -109,9 +120,9 @@ function handle(path, method, body, token) {
 }
 
 export const transport = {
-  async api(path, { method = 'GET', body, token } = {}) {
+  async api(path, { method = 'GET', body, token, playerKey } = {}) {
     try {
-      return handle(path, method, body, token);
+      return handle(path, method, body, token, playerKey);
     } catch (err) {
       if (err instanceof RuleError) fail(400, err.message);
       throw err;

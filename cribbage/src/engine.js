@@ -181,10 +181,10 @@ export function createGame({ id, numPlayers, autoPlay = true, teams = true }) {
   };
 }
 
-export function addPlayer(state, { id, name, tokenHash, bot = false }, rng = randomInt) {
+export function addPlayer(state, { id, name, tokenHash, bot = false, playerId = null }, rng = randomInt) {
   if (state.status !== 'lobby') throw new RuleError('This game has already started');
   if (state.players.length >= state.numPlayers) throw new RuleError('This game is full');
-  state.players.push({ id, name, tokenHash, bot, joinedAt: Date.now() });
+  state.players.push({ id, name, tokenHash, bot, playerId, joinedAt: Date.now() });
   log(state, `${name} joined`);
   if (state.players.length === state.numPlayers) startGame(state, rng);
   return state.players.length - 1;

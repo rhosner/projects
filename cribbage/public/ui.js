@@ -4,6 +4,33 @@ export const SIDE_COLORS = ['#f5b041', '#3dd6d0', '#f472b6', '#a78bfa'];
 const SYM = { S: '♠', H: '♥', D: '♦', C: '♣' };
 const RANK_ORDER = 'A23456789TJQK';
 
+// Suits drawn as shapes (not font characters, which differ by device), designed so
+// clubs (three round lobes) and spades (one pointed blade) read apart even when tiny.
+const SUIT_PATHS = {
+  S: 'M50 4C66 22 94 40 94 63c0 15-11 24-23 24-9 0-16-4-19-11 1 9 5 16 14 22H34c9-6 13-13 14-22-3 7-10 11-19 11C17 87 6 78 6 63 6 40 34 22 50 4Z',
+  H: 'M50 92C24 72 5 55 5 33 5 18 16 8 29 8c10 0 17 6 21 14 4-8 11-14 21-14 13 0 24 10 24 25 0 22-19 39-45 59Z',
+  D: 'M50 3 87 50 50 97 13 50Z',
+  C: 'M50 4a21 21 0 0 1 17 33.5A21 21 0 1 1 55 75c2 9 6 15 13 21H32c7-6 11-12 13-21a21 21 0 1 1-12-37.5A21 21 0 0 1 50 4Z',
+};
+export const suitSVG = (s) =>
+  `<svg class="suit" viewBox="0 0 100 100" aria-hidden="true"><path d="${SUIT_PATHS[s]}"/></svg>`;
+
+// Display preference: four-colour suits (clubs green, diamonds blue), on by default.
+const DISPLAY_KEY = 'cribbage.display';
+let display = { fourColor: true };
+try {
+  display = { ...display, ...JSON.parse(localStorage.getItem(DISPLAY_KEY) || '{}') };
+} catch { /* defaults */ }
+document.documentElement.classList.toggle('four-color', display.fourColor);
+export const displayPrefs = () => ({ ...display });
+export function setDisplayPref(key, on) {
+  display[key] = on;
+  try {
+    localStorage.setItem(DISPLAY_KEY, JSON.stringify(display));
+  } catch { /* fine */ }
+  document.documentElement.classList.toggle('four-color', display.fourColor);
+}
+
 export const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
@@ -29,7 +56,7 @@ const PIPS = {
 
 export function cardHTML(c, { cls = '', attrs = '', inner = '' } = {}) {
   const r = rankLabel(c);
-  const s = SYM[c[1]];
+  const s = suitSVG(c[1]);
   const n = RANK_ORDER.indexOf(c[0]) + 1;
   let center;
   if (n === 1) center = `<span class="ace">${s}</span>`;
@@ -43,16 +70,17 @@ export function cardHTML(c, { cls = '', attrs = '', inner = '' } = {}) {
       })
       .join('')}</span>`;
   }
-  return `<div class="card ${isRed(c) ? 'red' : 'black'} ${cls}" data-card="${c}" ${attrs} aria-label="${esc(cardText(c))}">
+  return `<div class="card ${isRed(c) ? 'red' : 'black'} suit-${c[1]} ${cls}" data-card="${c}" ${attrs} aria-label="${esc(cardText(c))}">
     <span class="idx tl"><b>${r}</b><span>${s}</span></span>${center}<span class="idx br"><b>${r}</b><span>${s}</span></span>${inner}</div>`;
 }
 
 export const backHTML = (cls = '', attrs = '') => `<div class="card back ${cls}" ${attrs} aria-hidden="true"><span></span></div>`;
 
+export const miniCard = (c, attrs = '') =>
+  `<span class="mini ${isRed(c) ? 'red' : ''} suit-${c[1]}" ${attrs} aria-label="${esc(cardText(c))}">${rankLabel(c)}${suitSVG(c[1])}</span>`;
+
 export function miniCards(cards) {
-  return cards
-    .map((c) => `<span class="mini ${isRed(c) ? 'red' : ''}">${esc(cardText(c))}</span>`)
-    .join('');
+  return cards.map((c) => miniCard(c)).join('');
 }
 
 export function timeAgo(t) {

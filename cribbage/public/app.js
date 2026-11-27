@@ -1,5 +1,5 @@
 import {
-  SIDE_COLORS, esc, cardHTML, backHTML, miniCards, cardText, cardValue, sortCards, timeAgo, mountBoard, updateBoard, boardRowsFor,
+  SIDE_COLORS, esc, cardHTML, backHTML, miniCard, miniCards, cardText, displayPrefs, setDisplayPref, cardValue, sortCards, timeAgo, mountBoard, updateBoard, boardRowsFor,
 } from './ui.js';
 import {
   pushAvailability, ensureSubscription, currentSubscription, registerServiceWorker, isStandalone,
@@ -32,14 +32,29 @@ const local = {
   token: (id) => local.read().games[id]?.token,
   remember: (id, token) => local.write((d) => (d.games[id] = { token, addedAt: d.games[id]?.addedAt || Date.now() })),
   forget: (id) => local.write((d) => delete d.games[id]),
+  // A private random key that identifies this person across games, for the leaderboard.
+  playerKey() {
+    let k = local.read().playerKey;
+    if (!k) {
+      k = Array.from(crypto.getRandomValues(new Uint8Array(18)), (b) => b.toString(16).padStart(2, '0')).join('');
+      local.write((d) => (d.playerKey = k));
+    }
+    return k;
+  },
 };
+
+// A device that has no games yet takes on the player key from a link, so the same
+// person keeps one leaderboard record across their phone and computer.
+function adoptPlayerKey(k, hadGames) {
+  if (typeof k === 'string' && /^[0-9a-f]{16,64}$/.test(k) && !hadGames) local.write((d) => (d.playerKey = k));
+}
 
 // A link that carries every seat this browser holds, for moving to another device
 // (or into an iPhone Home Screen app, which doesn't share storage with Safari).
 function allGamesLink() {
   const d = local.read();
   const games = Object.fromEntries(Object.entries(d.games).map(([id, g]) => [id, g.token]));
-  const bytes = new TextEncoder().encode(JSON.stringify({ n: d.name, g: games }));
+  const bytes = new TextEncoder().encode(JSON.stringify({ n: d.name, g: games, k: local.playerKey() }));
   const b64 = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   return `${location.origin}/#i=${b64}`;
 }
@@ -54,8 +69,10 @@ function importLink(text) {
   }
   const hash = new URLSearchParams(url.hash.slice(1));
   const single = url.pathname.match(/^\/g\/([a-z0-9]+)/);
+  const hadGames = Object.keys(local.read().games).length > 0;
   if (single && hash.get('t')) {
     local.remember(single[1], hash.get('t'));
+    adoptPlayerKey(hash.get('k'), hadGames);
     return 1;
   }
   if (hash.get('i')) {
@@ -64,6 +81,7 @@ function importLink(text) {
       const data = JSON.parse(new TextDecoder().decode(Uint8Array.from(raw, (c) => c.charCodeAt(0))));
       const entries = Object.entries(data.g || {}).filter(([id, t]) => /^[a-z0-9]+$/.test(id) && typeof t === 'string');
       for (const [id, token] of entries) local.remember(id, token);
+      adoptPlayerKey(data.k, hadGames);
       if (data.n && !local.read().name) local.write((d) => (d.name = String(data.n).slice(0, 20)));
       return entries.length;
     } catch {
@@ -81,8 +99,8 @@ function importLink(text) {
 const LOCAL = window.CRIB_TRANSPORT || null;
 
 async function api(path, { method = 'GET', body, gameId } = {}) {
-  if (LOCAL) return LOCAL.api(path, { method, body, token: gameId && local.token(gameId) });
-  const headers = { 'Content-Type': 'application/json' };
+  if (LOCAL) return LOCAL.api(path, { method, body, token: gameId && local.token(gameId), playerKey: local.playerKey() });
+  const headers = { 'Content-Type': 'application/json', 'X-Player-Key': local.playerKey() };
   const token = gameId && local.token(gameId);
   if (token) headers['X-Player-Token'] = token;
   const res = await fetch(`/api${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
@@ -122,6 +140,7 @@ function route() {
   teardown();
   teardown = () => {};
   document.title = 'Cribbage';
+  if (currentPath() === '/leaders') return renderLeaders();
   if (LOCAL) {
     const m = currentPath().match(/^\/g\/([a-z0-9]+)/);
     if (m) teardown = mountGame(m[1]);
@@ -131,9 +150,8 @@ function route() {
   const m = location.pathname.match(/^\/g\/([a-z0-9]+)/);
   if (m) {
     // Device links carry the token in the hash so it never hits server logs.
-    const t = new URLSearchParams(location.hash.slice(1)).get('t');
-    if (t) {
-      local.remember(m[1], t);
+    if (new URLSearchParams(location.hash.slice(1)).get('t')) {
+      importLink(location.href);
       history.replaceState(null, '', location.pathname);
     }
     teardown = mountGame(m[1]);
@@ -170,6 +188,72 @@ const brand = `<a href="/" data-link class="brand"><span class="brand-mark">♣<
 // ---------------------------------------------------------------------------
 // Home
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Leaderboard
+// ---------------------------------------------------------------------------
+const pct = (r) => (r == null ? '–' : `${Math.round(r * 100)}%`);
+
+async function renderLeaders() {
+  app.innerHTML = `
+    <div class="home leaders">
+      <header class="topbar">${brand}<div class="top-actions"><a class="btn ghost" href="/" data-link>Your games</a></div></header>
+      <section class="hero slim">
+        <h1>Leaderboard</h1>
+        <p>Every finished game on this ${LOCAL ? 'device' : 'server'}. Tap a player to see how they've done against each opponent.</p>
+      </section>
+      <div class="panel board-panel" id="leaders"><div class="loading"><div class="spinner"></div></div></div>
+    </div>`;
+  let data;
+  try {
+    data = await api('/stats');
+  } catch (err) {
+    $('#leaders').innerHTML = `<p class="muted">Couldn't load the leaderboard: ${esc(err.message)}</p>`;
+    return;
+  }
+  const el = $('#leaders');
+  if (!el) return;
+  const rows = data.players;
+  if (!rows.length) {
+    el.innerHTML = `<div class="empty"><p>No finished games yet. Records show up here once a game reaches 121.</p></div>`;
+    return;
+  }
+  const me = rows.find((p) => p.id === data.you);
+  el.innerHTML = `
+    ${me ? (me.wins + me.losses
+      ? `<div class="my-record"><span>Your record vs people</span><b>${me.wins}–${me.losses}</b>
+        <span class="muted">${pct(me.winRate)} · vs bots ${me.botWins}–${me.botLosses} · ${me.skunks} skunk${me.skunks === 1 ? '' : 's'} given</span></div>`
+      : `<div class="my-record"><span>Your record vs bots</span><b>${me.botWins}–${me.botLosses}</b>
+        <span class="muted">No finished games against people yet · ${me.skunks} skunk${me.skunks === 1 ? '' : 's'} given</span></div>`) : ''}
+    <div class="table-scroll"><table class="lb">
+      <thead><tr><th>#</th><th>Player</th><th title="Wins–losses against people">vs people</th><th>Win %</th><th title="Games against bots">vs bots</th><th title="Skunks given">Skunks</th></tr></thead>
+      <tbody>${rows.map((p, i) => `
+        <tr class="lb-row ${p.id === data.you ? 'is-me' : ''}" data-i="${i}" tabindex="0">
+          <td class="rank">${p.wins + p.losses ? i + 1 : '–'}</td>
+          <td class="who"><b>${esc(p.name)}</b>${p.id === data.you ? ' <span class="pill">You</span>' : ''}<small>last played ${timeAgo(p.lastPlayed)}</small></td>
+          <td class="num"><b>${p.wins}</b>–${p.losses}</td>
+          <td class="num">${pct(p.winRate)}</td>
+          <td class="num muted">${p.botWins}–${p.botLosses}</td>
+          <td class="num">${p.skunks}</td>
+        </tr>
+        <tr class="h2h-row" hidden><td colspan="6"><div class="h2h">
+          <h3>${esc(p.name)} vs…</h3>
+          <ul>${p.opponents.map((o) => `<li><span>${esc(o.name)}${o.bot ? ' <span class="bot-tag">BOT</span>' : ''}</span>
+            <span class="bar ${o.wins + o.losses ? '' : 'none'}"><i style="--w:${o.wins + o.losses ? (o.wins / (o.wins + o.losses)) * 100 : 0}%"></i></span>
+            <b>${o.wins}–${o.losses}</b></li>`).join('') || '<li class="muted">No opponents yet</li>'}</ul>
+        </div></td></tr>`).join('')}
+      </tbody></table></div>
+    <p class="hint">Team games count as a win for both partners. In 3- and 4-player games the winner beats everyone at the table. Records follow each browser's player; use “Move your games to another device” on the home page to keep one record across your phone and computer.</p>`;
+  for (const row of el.querySelectorAll('.lb-row')) {
+    const toggle = () => {
+      const detail = row.nextElementSibling;
+      detail.hidden = !detail.hidden;
+      row.classList.toggle('open', !detail.hidden);
+    };
+    row.onclick = toggle;
+    row.onkeydown = (e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), toggle());
+  }
+}
+
 function renderHome() {
   const data = local.read();
   // Game formats offered on the home screen: [key, label, players, teams]
@@ -177,7 +261,7 @@ function renderHome() {
   let mode = MODES[0];
   app.innerHTML = `
     <div class="home">
-      <header class="topbar">${brand}</header>
+      <header class="topbar">${brand}<div class="top-actions"><a class="btn ghost" href="/leaders" data-link>🏆 Leaderboard</a></div></header>
       <section class="hero">
         <h1>Cribbage with your friends,<br><span class="grad">on your own time.</span></h1>
         <p>Every game saves itself. Make your play, close the tab, and come back when it's your turn again.</p>
@@ -687,10 +771,11 @@ function mountGame(id) {
   function soundMenuHTML() {
     const p = soundPrefs();
     return `<details class="sound-menu" id="sound-menu" ${G.soundOpen ? 'open' : ''}>
-      <summary class="icon-btn" title="Sound">${p.sfx || p.music ? '🔊' : '🔇'}</summary>
+      <summary class="icon-btn" title="Sound and display">${p.sfx || p.music ? '🔊' : '🔇'}</summary>
       <div class="sound-pop">
         <label class="switch"><input type="checkbox" data-pref="sfx" ${p.sfx ? 'checked' : ''}><span>Card sounds</span></label>
         <label class="switch"><input type="checkbox" data-pref="music" ${p.music ? 'checked' : ''}><span>Background music</span></label>
+        <label class="switch"><input type="checkbox" data-display="fourColor" ${displayPrefs().fourColor ? 'checked' : ''}><span>Four-colour suits <small class="muted">♣ green, ♦ blue</small></span></label>
       </div></details>`;
   }
 
@@ -712,7 +797,7 @@ function mountGame(id) {
     if (dev) {
       dev.onclick = () => {
         if (confirm('This link signs in as YOU on another device (e.g. your phone). Don’t share it with anyone else. Copy it?')) {
-          copy(`${location.origin}/g/${id}#t=${local.token(id)}`, 'Personal link copied');
+          copy(`${location.origin}/g/${id}#t=${local.token(id)}&k=${local.playerKey()}`, 'Personal link copied');
         }
       };
     }
@@ -722,6 +807,9 @@ function mountGame(id) {
     }
     const menu = $('#sound-menu');
     menu.ontoggle = () => (G.soundOpen = menu.open);
+    for (const box of menu.querySelectorAll('input[data-display]')) {
+      box.onchange = () => setDisplayPref(box.dataset.display, box.checked);
+    }
     for (const box of menu.querySelectorAll('input[data-pref]')) {
       box.onchange = () => {
         setSoundPref(box.dataset.pref, box.checked);
@@ -886,7 +974,7 @@ function mountGame(id) {
       G.lastAnimatedPile = hist.map((h) => h.card);
       if (prior.length) {
         earlier = `<div class="earlier"><span class="muted small">Earlier this hand</span><div>${prior
-          .map((h) => `<span class="mini ${'HD'.includes(h.card[1]) ? 'red' : ''}" style="--c:${SIDE_COLORS[v.players[h.seat].side]}">${esc(cardText(h.card))}</span>${h.reset ? '<i class="sep"></i>' : ''}`)
+          .map((h) => `${miniCard(h.card, `style="--c:${SIDE_COLORS[v.players[h.seat].side]}"`)}${h.reset ? '<i class="sep"></i>' : ''}`)
           .join('')}</div></div>`;
       }
     } else {
@@ -934,7 +1022,7 @@ function mountGame(id) {
       // During your play, hovering (or tapping) a card previews the count it would make.
       const after = canPlay ? v.pegging.count + cardValue(c) : 0;
       const peek = canPlay
-        ? `<span class="peek ${illegal ? 'over' : ''}">${illegal ? 'Over 31' : `+${cardValue(c)} → <b>${after}</b>`}</span>`
+        ? `<span class="peek ${illegal ? 'too-high' : ''}">${illegal ? 'Over 31' : `+${cardValue(c)} → <b>${after}</b>`}</span>`
         : '';
       return cardHTML(c, {
         cls: `hand-card ${sel ? 'selected' : ''} ${illegal ? 'illegal' : ''} ${interactive ? 'interactive' : ''}`,
