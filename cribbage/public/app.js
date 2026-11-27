@@ -1,9 +1,10 @@
 import {
-  SIDE_COLORS, esc, cardHTML, backHTML, miniCards, cardText, sortCards, timeAgo, mountBoard, updateBoard, boardRowsFor,
+  SIDE_COLORS, esc, cardHTML, backHTML, miniCards, cardText, cardValue, sortCards, timeAgo, mountBoard, updateBoard, boardRowsFor,
 } from './ui.js';
 import {
   pushAvailability, ensureSubscription, currentSubscription, registerServiceWorker, isStandalone,
 } from './push-client.js';
+import { sfx, soundPrefs, setSoundPref } from './sound.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
@@ -390,6 +391,7 @@ function countThrough(root, onDone) {
       at(() => {
         li.classList.add('shown');
         highlight(sh, li);
+        sfx.tick(lines.indexOf(li));
         sh.querySelector('.say').textContent = `${li.dataset.label} · ${total}`;
         const el = sh.querySelector('.show-total');
         el.textContent = total;
@@ -424,6 +426,8 @@ function mountGame(id) {
     dealtKey: null,
     starterSeen: null,
     pushSynced: false,
+    goShown: new Set(),
+    soundOpen: false,
     boardSides: 0,
     alive: true,
   };
@@ -433,6 +437,7 @@ function mountGame(id) {
       <header class="topbar" id="topbar">${brand}</header>
       <main class="layout">
         <section class="main-col">
+          <div id="callouts" aria-live="polite"></div>
           <div id="push-banner"></div>
           <div class="scores" id="scores"></div>
           <div class="board-wrap" id="board"></div>
@@ -471,6 +476,76 @@ function mountGame(id) {
     if (v.phase === 'pegging' && !v.yourTurn) G.selected = [];
     notifyIfTurn(v);
     render();
+    announce(prev, v);
+  }
+
+  // --- what just happened: sounds and table callouts ---------------------------
+  const logKey = (e) => (e ? `${e.t}|${e.text}` : '');
+  function announce(prev, v) {
+    const log = v.log || [];
+    if (!prev || G.logSeen === undefined) {
+      G.logSeen = logKey(log.at(-1)); // first load: don't replay history
+      return;
+    }
+    const from = log.findIndex((e) => logKey(e) === G.logSeen);
+    const fresh = from === -1 ? log.slice(-3) : log.slice(from + 1);
+    G.logSeen = logKey(log.at(-1));
+    let delay = 0;
+    for (const e of fresh) {
+      const later = (fn) => setTimeout(fn, delay);
+      const who = e.seat != null ? v.players[e.seat] : null;
+      if (e.card) later(() => sfx.card());
+      if (e.kind === 'hand') later(() => sfx.deal(v.numPlayers === 2 ? 6 : 5));
+      if (e.calls?.length && who) {
+        const is31 = e.calls.some((c) => c.label === '31');
+        const isGo = e.kind === 'go';
+        later(() => {
+          if (is31) sfx.thirtyOne();
+          else if (isGo) sfx.go();
+          else if (e.points) sfx.score(e.points);
+          callout(who, e.calls, is31);
+        });
+        delay += 250;
+      }
+    }
+    if (v.yourTurn && !prev.yourTurn) setTimeout(() => sfx.turn(), delay + 150);
+    if (v.status === 'finished' && prev.status !== 'finished') setTimeout(() => sfx.win(), delay + 300);
+  }
+
+  // Big announcements over the felt, queued so each one gets seen.
+  const calloutQueue = [];
+  let calloutBusy = false;
+  function callout(player, calls, big) {
+    const name = player.seat === G.view?.you ? 'You' : player.name;
+    const text = calls.map((c) => (c.points ? `${c.label} for ${c.points}` : c.label)).join(' · ');
+    calloutQueue.push({ name, text, color: SIDE_COLORS[player.side], big });
+    if (!calloutBusy) nextCallout();
+  }
+  function nextCallout() {
+    const c = calloutQueue.shift();
+    const layer = $('#callouts');
+    const felt = $('.felt');
+    if (!c || !layer || !felt) {
+      calloutBusy = false;
+      return;
+    }
+    calloutBusy = true;
+    const col = layer.parentElement.getBoundingClientRect();
+    const r = felt.getBoundingClientRect();
+    // Centered on the felt's top edge, so the pile (and the 31 on it) stays visible.
+    layer.style.top = `${r.top - col.top}px`;
+    const el = document.createElement('div');
+    el.className = `callout ${c.big ? 'big' : ''}`;
+    el.style.setProperty('--c', c.color);
+    el.innerHTML = `<small>${esc(c.name)}</small><b>${esc(c.text)}</b>`;
+    layer.append(el);
+    // One at a time: the next waits until this one has fully left. Shorter when more are waiting.
+    const hold = calloutQueue.length ? 1000 : c.big ? 1900 : 1400;
+    setTimeout(() => el.classList.add('out'), hold);
+    setTimeout(() => {
+      el.remove();
+      nextCallout();
+    }, hold + 320);
   }
 
   function notifyIfTurn(v) {
@@ -609,6 +684,16 @@ function mountGame(id) {
     renderOverlay(v);
   }
 
+  function soundMenuHTML() {
+    const p = soundPrefs();
+    return `<details class="sound-menu" id="sound-menu" ${G.soundOpen ? 'open' : ''}>
+      <summary class="icon-btn" title="Sound">${p.sfx || p.music ? '🔊' : '🔇'}</summary>
+      <div class="sound-pop">
+        <label class="switch"><input type="checkbox" data-pref="sfx" ${p.sfx ? 'checked' : ''}><span>Card sounds</span></label>
+        <label class="switch"><input type="checkbox" data-pref="music" ${p.music ? 'checked' : ''}><span>Background music</span></label>
+      </div></details>`;
+  }
+
   function renderTopbar(v) {
     const notifOn = pushOn();
     const avail = pushAvailability();
@@ -617,6 +702,7 @@ function mountGame(id) {
     $('#topbar').innerHTML = `${brand}
       <div class="top-meta">${meta}</div>
       <div class="top-actions">
+        ${soundMenuHTML()}
         ${showBell ? `<button class="icon-btn ${notifOn ? 'bell-on' : ''}" id="notif" title="${notifOn ? 'Notifications on (tap to turn off)' : 'Turn on notifications'}" aria-pressed="${notifOn}">${notifOn ? '🔔' : '🔕'}</button>` : ''}
         ${LOCAL ? '<span class="pill">Demo · runs in your browser</span>' : '<button class="btn ghost" id="invite">Invite</button>'}
         ${v.you !== null && !LOCAL ? `<button class="btn ghost" id="device" title="Open this game as you on another device">Other device</button>` : ''}
@@ -633,6 +719,15 @@ function mountGame(id) {
     const n = $('#notif');
     if (n) {
       n.onclick = () => (pushOn() ? disablePush() : enablePush());
+    }
+    const menu = $('#sound-menu');
+    menu.ontoggle = () => (G.soundOpen = menu.open);
+    for (const box of menu.querySelectorAll('input[data-pref]')) {
+      box.onchange = () => {
+        setSoundPref(box.dataset.pref, box.checked);
+        if (box.dataset.pref === 'sfx' && box.checked) sfx.card();
+        $('#sound-menu summary').textContent = soundPrefs().sfx || soundPrefs().music ? '🔊' : '🔇';
+      };
     }
   }
 
@@ -733,6 +828,7 @@ function mountGame(id) {
     }
     if (v.phase === 'show') return 'Counting the hands…';
     if (v.phase === 'pegging') {
+      if (v.pegging.clearing) return v.pegging.count === 31 ? '<b>31!</b> Clearing the pile…' : 'Go. Clearing the pile…';
       if (v.players.every((p) => p.cardCount === 0)) return 'That’s every card. Counting the hands…';
       if (v.yourTurn) return `Your play. The count is <b>${v.pegging.count}</b>`;
       if (v.pegging.turn === v.you) {
@@ -743,18 +839,27 @@ function mountGame(id) {
     return '';
   }
 
+  // A big "GO" by a player who can't play. It pops in only the first time it appears.
+  function goBadge(p) {
+    const key = `${G.view.handNo}:${G.view.pegging?.history.length}:${p.seat}`;
+    const fresh = !G.goShown.has(key);
+    G.goShown.add(key);
+    return `<span class="go-badge ${fresh ? 'pop' : ''}">GO</span>`;
+  }
+
   function seatHTML(v, p) {
     const color = SIDE_COLORS[p.side];
     const team = v.teams ? `<span class="team" style="--c:${color}">${v.you !== null && p.side === v.players[v.you].side ? 'Partner' : 'Opponent'}</span>` : '';
     let note = '';
     if (v.status === 'playing') {
       if (v.phase === 'discard') note = p.discarded ? '✓ Ready' : 'Choosing…';
-      else if (v.phase === 'pegging') note = p.isTurn ? 'Thinking…' : p.saidGo ? 'Go' : '';
+      else if (v.phase === 'pegging') note = p.isTurn ? 'Thinking…' : '';
     }
     const backs = Array.from({ length: p.cardCount }, () => backHTML('xs')).join('');
     return `<div class="seat ${p.isTurn ? 'turn' : ''}" style="--c:${color}">
       <div class="seat-head"><span class="avatar" style="--c:${color}">${esc(p.name[0].toUpperCase())}</span>
         <div class="seat-name"><b>${esc(p.name)}${p.bot ? ' <span class="bot-tag">BOT</span>' : ''}</b>${team}</div>
+        ${p.saidGo && v.phase === 'pegging' ? goBadge(p) : ''}
         ${v.dealer === p.seat ? '<span class="dealer" title="Dealer">D</span>' : ''}</div>
       <div class="seat-cards">${backs || '<span class="muted small">No cards</span>'}</div>
       <div class="seat-note">${note}</div></div>`;
@@ -826,9 +931,15 @@ function mountGame(id) {
       const sel = G.selected.includes(c);
       const illegal = canPlay && !v.legal.includes(c);
       const interactive = (canDiscard || (canPlay && !illegal)) && !G.busy;
+      // During your play, hovering (or tapping) a card previews the count it would make.
+      const after = canPlay ? v.pegging.count + cardValue(c) : 0;
+      const peek = canPlay
+        ? `<span class="peek ${illegal ? 'over' : ''}">${illegal ? 'Over 31' : `+${cardValue(c)} → <b>${after}</b>`}</span>`
+        : '';
       return cardHTML(c, {
         cls: `hand-card ${sel ? 'selected' : ''} ${illegal ? 'illegal' : ''} ${interactive ? 'interactive' : ''}`,
         attrs: `style="--i:${i};--n:${hand.length}" ${interactive ? 'tabindex="0" role="button"' : ''}`,
+        inner: peek,
       });
     }).join('');
 
@@ -846,7 +957,7 @@ function mountGame(id) {
 
     return `<div class="me ${v.yourTurn ? 'turn' : ''}" style="--c:${SIDE_COLORS[me.side]}">
       <div class="me-head"><span class="avatar" style="--c:${SIDE_COLORS[me.side]}">${esc(me.name[0].toUpperCase())}</span><b>${esc(me.name)}</b>
-        ${v.dealer === v.you ? '<span class="dealer">D</span>' : ''}${me.saidGo && v.phase === 'pegging' ? '<span class="pill">Go</span>' : ''}</div>
+        ${v.dealer === v.you ? '<span class="dealer">D</span>' : ''}${me.saidGo && v.phase === 'pegging' ? goBadge(me) : ''}</div>
       <div class="hand ${G.dealtKey !== `${v.handNo}` ? 'deal' : ''}">${cards || '<span class="muted">No cards in hand</span>'}</div>
       <div class="actions">${action}</div>
       ${keptNote}

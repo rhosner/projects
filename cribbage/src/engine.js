@@ -247,7 +247,9 @@ function cutStarter(state, rng) {
   log(state, `Starter cut: ${cardLabel(starter)}`, { kind: 'starter' });
   if (starter[0] === 'J') {
     addPoints(state, state.dealer, 2);
-    log(state, `${state.players[state.dealer].name} scores 2 for his heels`, { seat: state.dealer, points: 2 });
+    log(state, `${state.players[state.dealer].name} scores 2 for his heels`, {
+      seat: state.dealer, points: 2, calls: [{ label: 'His heels', points: 2 }],
+    });
     if (state.status === 'finished') return;
   }
   state.pegging = {
@@ -287,6 +289,7 @@ export function legalPlays(state, seat) {
 
 export function play(state, seat, card, rng = randomInt) {
   if (state.phase !== 'pegging') throw new RuleError('Not time to play');
+  if (state.pegging.needsReset) throw new RuleError('Hang on, the pile is being cleared');
   if (effectiveTurn(state) !== seat) throw new RuleError("It's not your turn");
   state.pegging.turn = seat; // apply any pass-overs that were pending
   if (!state.pegging.remaining[seat].includes(card)) throw new RuleError('That card is not in your hand');
@@ -311,12 +314,20 @@ function doPlay(state, seat, card, auto) {
     seat,
     points,
     card,
+    // What the table should announce, e.g. "31 for 2" or "Fifteen for 2 · Pair for 2".
+    calls: items.map((i) => ({ label: callLabel(i.kind), points: i.points })),
   });
   addPoints(state, seat, points);
   if (state.status === 'finished') return;
 
-  if (p.count === 31) resetCount(p);
+  // Leave a 31 on the table for a moment; the pile is cleared by a separate step.
+  if (p.count === 31) p.needsReset = true;
   p.turn = nextSeat(state, seat);
+}
+
+function callLabel(kind) {
+  if (kind === 'thirty-one') return '31';
+  return kind[0].toUpperCase() + kind.slice(1);
 }
 
 function resetCount(p) {
@@ -338,6 +349,7 @@ export const STEP_DELAY = {
   forced: 900,
   go: 800,
   'go-point': 1200,
+  reset: 1900, // how long a 31, or the pile that just earned a go, stays on the table
   'last-card': 1100,
   'end-pegging': 1600,
   deal: 2600,
@@ -362,10 +374,20 @@ export function autoStep(state, rng = randomInt) {
   const n = state.numPlayers;
   const canPlay = (s) => p.remaining[s].some((c) => valueOf(c) + p.count <= 31);
 
+  // Clear a pile that ended on 31 or earned a go, after it has been seen.
+  if (p.needsReset && p.remaining.some((h) => h.length)) {
+    p.needsReset = false;
+    resetCount(p);
+    return 'reset';
+  }
+
   if (p.remaining.every((h) => h.length === 0)) {
-    if (p.count > 0 && !p.lastCardDone) {
+    // The last card scores 1, unless it made 31 (which already scored 2).
+    if (p.count > 0 && p.count < 31 && !p.lastCardDone) {
       p.lastCardDone = true;
-      log(state, `${state.players[p.lastPlayer].name} scores 1 for last card`, { seat: p.lastPlayer, points: 1 });
+      log(state, `${state.players[p.lastPlayer].name} scores 1 for last card`, {
+        seat: p.lastPlayer, points: 1, calls: [{ label: 'Last card', points: 1 }],
+      });
       addPoints(state, p.lastPlayer, 1);
       return 'last-card';
     }
@@ -378,14 +400,16 @@ export function autoStep(state, rng = randomInt) {
     const t = p.turn;
     if (t !== p.lastPlayer && p.remaining[t].length && !p.saidGo[t]) {
       p.saidGo[t] = true;
-      log(state, `${state.players[t].name}: “Go”`, { seat: t });
+      log(state, `${state.players[t].name}: “Go”`, { seat: t, kind: 'go', calls: [{ label: 'Go' }] });
       p.turn = nextSeat(state, t);
       return 'go';
     }
-    log(state, `${state.players[p.lastPlayer].name} scores 1 for the go`, { seat: p.lastPlayer, points: 1 });
+    log(state, `${state.players[p.lastPlayer].name} scores 1 for the go`, {
+      seat: p.lastPlayer, points: 1, calls: [{ label: 'Go', points: 1 }],
+    });
     addPoints(state, p.lastPlayer, 1);
     if (state.status === 'finished') return 'go-point';
-    resetCount(p);
+    p.needsReset = true;
     p.turn = nextSeat(state, p.lastPlayer);
     return 'go-point';
   }
@@ -399,7 +423,7 @@ export function autoStep(state, rng = randomInt) {
     }
     if (!canPlay(t)) {
       p.saidGo[t] = true;
-      log(state, `${state.players[t].name}: “Go”`, { seat: t });
+      log(state, `${state.players[t].name}: “Go”`, { seat: t, kind: 'go', calls: [{ label: 'Go' }] });
       p.turn = nextSeat(state, t);
       return 'go';
     }
@@ -471,7 +495,7 @@ export function isTurn(state, seat) {
   if (state.phase === 'pegging') {
     // "Your turn" means the game is waiting on your decision. A forced card or a
     // "Go" is played for you after a pause, so it doesn't count.
-    if (effectiveTurn(state) !== seat) return false;
+    if (state.pegging.needsReset || effectiveTurn(state) !== seat) return false;
     return legalPlays(state, seat).length > (state.autoPlay ? 1 : 0);
   }
   return false;
@@ -514,7 +538,7 @@ export function viewFor(state, seat) {
     cribCount: state.crib.length,
     starter: state.starter,
     pegging: p
-      ? { count: p.count, pile: p.pile, history: p.history, turn: effectiveTurn(state), lastPlayer: p.lastPlayer }
+      ? { count: p.count, pile: p.pile, history: p.history, turn: effectiveTurn(state), clearing: !!p.needsReset, lastPlayer: p.lastPlayer }
       : null,
     lastHand: state.lastHand,
     log: state.log.slice(-80),

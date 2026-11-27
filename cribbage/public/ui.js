@@ -10,6 +10,7 @@ export const esc = (s) =>
 export const rankLabel = (c) => (c[0] === 'T' ? '10' : c[0]);
 export const cardText = (c) => `${rankLabel(c)}${SYM[c[1]]}`;
 export const isRed = (c) => c[1] === 'H' || c[1] === 'D';
+export const cardValue = (c) => Math.min(RANK_ORDER.indexOf(c[0]) + 1, 10);
 export const sortCards = (cards) =>
   [...cards].sort((a, b) => RANK_ORDER.indexOf(a[0]) - RANK_ORDER.indexOf(b[0]) || 'SHDC'.indexOf(a[1]) - 'SHDC'.indexOf(b[1]));
 
@@ -26,7 +27,7 @@ const PIPS = {
   10: [[1, 1], [3, 1], [2, 2], [1, 3], [3, 3], [1, 5], [3, 5], [2, 6], [1, 7], [3, 7]],
 };
 
-export function cardHTML(c, { cls = '', attrs = '' } = {}) {
+export function cardHTML(c, { cls = '', attrs = '', inner = '' } = {}) {
   const r = rankLabel(c);
   const s = SYM[c[1]];
   const n = RANK_ORDER.indexOf(c[0]) + 1;
@@ -43,7 +44,7 @@ export function cardHTML(c, { cls = '', attrs = '' } = {}) {
       .join('')}</span>`;
   }
   return `<div class="card ${isRed(c) ? 'red' : 'black'} ${cls}" data-card="${c}" ${attrs} aria-label="${esc(cardText(c))}">
-    <span class="idx tl"><b>${r}</b><span>${s}</span></span>${center}<span class="idx br"><b>${r}</b><span>${s}</span></span></div>`;
+    <span class="idx tl"><b>${r}</b><span>${s}</span></span>${center}<span class="idx br"><b>${r}</b><span>${s}</span></span>${inner}</div>`;
 }
 
 export const backHTML = (cls = '', attrs = '') => `<div class="card back ${cls}" ${attrs} aria-hidden="true"><span></span></div>`;

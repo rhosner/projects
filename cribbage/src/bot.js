@@ -86,6 +86,7 @@ export function botMove(state) {
     return seat === -1 ? null : { type: 'discard', seat, cards: chooseDiscard(state, seat) };
   }
   if (state.phase === 'pegging') {
+    if (state.pegging.needsReset) return null; // the table is still showing a 31 / go
     const seat = effectiveTurn(state);
     // Only a real choice: a forced card or a "Go" is an automatic step, not a bot decision.
     if (!state.players[seat]?.bot || legalPlays(state, seat).length < (state.autoPlay ? 2 : 1)) return null;

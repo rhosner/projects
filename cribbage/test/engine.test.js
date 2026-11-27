@@ -152,7 +152,7 @@ test('automatic steps happen one at a time and end in a counted, then dealt, han
     assert.equal(g.phase, 'discard');
     assert.equal(g.lastHand.handNo, 1);
   }
-  assert.ok(kinds.every((k) => ['forced', 'go', 'go-point', 'last-card', 'end-pegging', 'deal'].includes(k)), kinds.join());
+  assert.ok(kinds.every((k) => ['forced', 'go', 'go-point', 'reset', 'last-card', 'end-pegging', 'deal'].includes(k)), kinds.join());
 });
 
 test('4-player free-for-all: four separate scores, everyone plays alone', () => {
@@ -168,4 +168,38 @@ test('games saved before the teams option still play as teams', () => {
   const g = createGame({ id: 'g', numPlayers: 4 });
   delete g.teams;
   assert.equal(viewFor(g, null).teams, true);
+});
+
+test('a 31 stays on the table until a separate reset step clears it', () => {
+  // Find a seeded game where a play makes 31 with cards still to come.
+  for (let seed = 1; seed < 400; seed++) {
+    const rng = seeded(seed);
+    const g = createGame({ id: 'g', numPlayers: 2 });
+    addPlayer(g, { id: 'a', name: 'A', tokenHash: 'x' }, rng);
+    addPlayer(g, { id: 'b', name: 'B', tokenHash: 'y' }, rng);
+    let guard = 0;
+    while (g.status === 'playing' && g.handNo === 1 && guard++ < 300) {
+      if (autoStep(g, rng)) continue;
+      if (g.phase === 'discard') {
+        const s = g.discarded.indexOf(false);
+        discard(g, s, g.hands[s].slice(0, 2), rng);
+        continue;
+      }
+      const t = g.pegging.turn;
+      play(g, t, legalPlays(g, t)[0], rng);
+      const p = g.pegging;
+      if (p.count === 31 && p.remaining.some((h) => h.length) && g.status === 'playing') {
+        assert.equal(p.pile.length > 0, true, 'pile still on the table');
+        assert.equal(viewFor(g, 0).pegging.count, 31, 'players see the 31');
+        assert.ok(g.log.at(-1).calls.some((c) => c.label === '31' && c.points === 2), 'announced as 31 for 2');
+        assert.equal(viewFor(g, 0).yourTurn || viewFor(g, 1).yourTurn, false, 'nobody can play during the pause');
+        assert.throws(() => play(g, p.turn, p.remaining[p.turn][0], rng), /pile is being cleared/);
+        assert.equal(autoStep(g, rng), 'reset');
+        assert.equal(g.pegging.count, 0);
+        assert.equal(g.pegging.pile.length, 0);
+        return;
+      }
+    }
+  }
+  assert.fail('no 31 found in 400 seeded games');
 });

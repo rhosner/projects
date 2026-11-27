@@ -14,6 +14,7 @@ const copies = {
   'app.js': 'public/app.js',
   'ui.js': 'public/ui.js',
   'push-client.js': 'public/push-client.js',
+  'sound.js': 'public/sound.js',
   'engine.js': 'src/engine.js',
   'bot.js': 'src/bot.js',
   'local-backend.js': 'demo/local-backend.js',
