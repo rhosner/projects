@@ -1,4 +1,31 @@
-# Cribbage
+# Card Night
+
+Card games for friends: **cribbage** and **Thirty-One** you can play on your own time, and **Texas Hold'em** for playing live. Pick the game when you create one; invites, notifications, sound and the leaderboard work the same for all three.
+
+## Thirty-One
+
+2–8 players, Bicycle rules. Get your hand as close to 31 as you can in a single suit (Ace 11, faces 10).
+
+- **Turn:** knock (in place of your turn), or draw from the deck or the discard pile and then discard. Tap the deck or the discard to draw; while holding four cards, hovering a card shows what your hand is worth if you discard it.
+- **Knock:** everyone else gets one more turn, then the lowest hand loses a token; a knocker with the lowest hand loses 2.
+- **31** at any time, including the deal, wins the round at once; everyone else loses a token.
+- **Tokens:** 6 each by default (3 or 9 when creating a game). At 0 you're on your honor; lose again and you're out. Last player in wins.
+- **Cases the rules leave open, as implemented:** ties for lowest all lose (a tied knocker loses 2); each token lost counts as a loss (a knocker with 1 token losing 2 goes straight out); you can't throw back the card you just took from the discard pile; an empty deck is rebuilt from the discard pile; the deal passes left each round; if everyone left would go out in the same round, nobody does and play continues.
+- **Bot** takes the discard when it clearly helps, keeps its best three, and knocks at 27+ (25+ once a round drags on).
+
+## Texas Hold'em
+
+No-limit tournament for 2–9 players. Everyone starts with the same stack; blinds double every few hands; the last player with chips wins.
+
+- **Defaults** (all adjustable when creating a game): 1,500 chips, blinds 10/20, blinds double every 10 hands, 60 seconds to act (30/60/120). Blinds go up by hand count, not clock time.
+- **Lobby:** the host can **Start now** once 2+ players are seated (the game also starts when every seat fills). Add bots one at a time or fill every seat.
+- **Timer:** when time runs out you check if you can, otherwise fold. Two timeouts in a row marks you away (auto-acts after a few seconds) until you act again.
+- **Rules:** heads-up blinds (button posts the small blind, acts first preflop), minimum raise = last full raise, all-ins smaller than a full raise don't reopen betting, side pots split by all-in level, odd chips to the first winner left of the button.
+- **Bots** rate preflop hands with the Chen formula and estimate post-flop equity by simulation against the price of calling. Fine for filling seats; not strong.
+- **Leaderboard:** separate tab. Winning a tournament beats everyone at the table.
+
+## Cribbage
+
 
 Turn-based cribbage for 2–4 friends. Every game is saved on the server, so anyone can open their link at any time, make their play if it's their turn, and leave.
 
@@ -70,7 +97,9 @@ Push needs HTTPS, except on `localhost`, where it works too: your server sends e
 
 You need **a host with a persistent disk**. Games live in a SQLite file, so a host that wipes the filesystem on every restart or deploy will wipe your games too. Render's free tier, Vercel and Netlify all fall into that category.
 
-**Fly.io** (config included):
+**Automatic deploys:** `.github/workflows/deploy-cribbage.yml` runs the tests and, if they pass, deploys to Fly whenever a change under `cribbage/` is merged to `master` (or when run by hand from the Actions tab). It needs a repository secret named `FLY_API_TOKEN`, created with `fly tokens create deploy -a cribbage-with-friends`.
+
+**Fly.io, first-time setup** (config included):
 
 ```bash
 cd cribbage

@@ -164,3 +164,86 @@ test('leaderboard: a finished game is credited to the player who played it', asy
   assert.ok(!JSON.stringify(stats).includes(key), 'the private key never appears');
   assert.equal((await call('/api/stats')).data.you, null);
 });
+
+test("Hold'em over HTTP: host starts early, plays through /act, finishes, separate leaderboard", async () => {
+  const key = 'holdem-player-key';
+  const created = await call('/api/games', {
+    method: 'POST', key,
+    body: { type: 'holdem', name: 'Hana', numPlayers: 6, settings: { startingStack: 300, bigBlind: 20, levelHands: 2 } },
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.data));
+  const { id, token } = created.data;
+  const join = await call(`/api/games/${id}/join`, { method: 'POST', body: { name: 'Guest' } });
+  assert.equal((await call(`/api/games/${id}/start`, { method: 'POST', token: join.data.token })).status, 403, 'only the host starts');
+  assert.equal((await call(`/api/games/${id}/bots`, { method: 'POST', token, body: { count: 1 } })).data.players.length, 3, 'add one bot');
+  const started = await call(`/api/games/${id}/start`, { method: 'POST', token });
+  assert.equal(started.data.status, 'playing');
+  assert.equal(started.data.numPlayers, 3);
+  assert.equal(started.data.type, 'holdem');
+
+  // Both humans play: always call/check (the guest folds sometimes to keep things moving).
+  const tokens = [token, join.data.token];
+  let v;
+  for (let guard = 0; guard < 8000; guard++) {
+    const views = await Promise.all(tokens.map((t) => call(`/api/games/${id}`, { token: t, key: t === token ? key : undefined })));
+    v = views[0].data;
+    if (v.status === 'finished') break;
+    const mover = views.find((x) => x.data.yourTurn);
+    if (!mover) {
+      await new Promise((r) => setTimeout(r, 3));
+      continue;
+    }
+    const o = mover.data.options;
+    const t = tokens[mover.data.you];
+    const action = o.canCheck ? { type: 'check' } : mover.data.you === 1 && guard % 3 === 0 ? { type: 'fold' } : { type: 'call' };
+    const r = await call(`/api/games/${id}/act`, { method: 'POST', token: t, body: { action } });
+    assert.ok([200, 400].includes(r.status), JSON.stringify(r.data)); // 400 only if the turn moved on in between
+    const total = v.players.reduce((a, p) => a + p.stack, 0) + v.pot;
+    assert.equal(total, 900, 'chips conserved as seen by players');
+  }
+  assert.equal(v.status, 'finished', 'tournament finished');
+  const winner = v.players[v.winner];
+  assert.equal(winner.stack, 900);
+
+  const stats = (await call('/api/stats?game=holdem', { key })).data;
+  assert.equal(stats.game, 'holdem');
+  const me = stats.players.find((p) => p.id === stats.you);
+  assert.ok(me, 'host has a Hold’em record');
+  assert.equal(me.wins + me.losses, 1, 'the game counts against people (a human guest was at the table)');
+  const cribbageStats = (await call('/api/stats', { key })).data;
+  assert.ok(!cribbageStats.players.some((p) => p.id === stats.you), 'not mixed into the cribbage leaderboard');
+  assert.equal((await call('/api/stats?game=nope')).status, 400);
+});
+
+test('Thirty-One over HTTP: draw, discard, knock; game finishes; own leaderboard', async () => {
+  const key = 't1-player-key';
+  const created = await call('/api/games', { method: 'POST', key, body: { type: 'thirtyone', name: 'Tess', numPlayers: 4, settings: { tokens: 1 } } });
+  assert.equal(created.status, 201, JSON.stringify(created.data));
+  const { id, token } = created.data;
+  await call(`/api/games/${id}/bots`, { method: 'POST', token, body: { count: 2 } });
+  const v0 = (await call(`/api/games/${id}/start`, { method: 'POST', token })).data;
+  assert.equal(v0.type, 'thirtyone');
+  assert.equal(v0.numPlayers, 3);
+  let v;
+  let knocked = false;
+  for (let guard = 0; guard < 6000; guard++) {
+    v = (await call(`/api/games/${id}`, { token, key })).data;
+    if (v.status === 'finished') break;
+    if (!v.yourTurn) {
+      await new Promise((r) => setTimeout(r, 3));
+      continue;
+    }
+    let action;
+    if (v.phase === 'turn') action = v.canKnock && !knocked && v.handValue.value >= 20 ? { type: 'knock' } : { type: 'draw', from: 'stock' };
+    else action = { type: 'discard', card: v.hand.find((c) => !(v.drew?.from === 'discard' && c === v.drew.card)) };
+    if (action.type === 'knock') knocked = true;
+    const r = await call(`/api/games/${id}/act`, { method: 'POST', token, body: { action } });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.ok(r.data.hand.length <= 4);
+  }
+  assert.equal(v.status, 'finished');
+  const stats = (await call('/api/stats?game=thirtyone', { key })).data;
+  const me = stats.players.find((p) => p.id === stats.you);
+  assert.ok(me, 'has a Thirty-One record');
+  assert.equal(me.botWins + me.botLosses, 1, 'a game against bots');
+});

@@ -8,7 +8,10 @@
 // - 3- and 4-player games: the winner beats everyone; losers don't record a
 //   result against each other.
 // - Games against people and games against bots are counted separately.
-import { sideOf } from './engine.js';
+import { sideOf as cribbageSide } from './engine.js';
+
+// Only cribbage has teams; in every other game each seat plays alone.
+const sideOf = (g, seat) => (g.type && g.type !== 'cribbage' ? seat : cribbageSide(g, seat));
 
 export function computeStats(games) {
   const players = new Map();
@@ -53,7 +56,7 @@ export function computeStats(games) {
         }
         if (won) {
           rec.wins++;
-          if (g.scores[sideOf(g, j)] < 91) skunked.add(sideOf(g, j));
+          if (g.scores && g.scores[sideOf(g, j)] < 91) skunked.add(sideOf(g, j)); // cribbage only
         } else if (sideOf(g, j) === g.winner) {
           rec.losses++;
         }

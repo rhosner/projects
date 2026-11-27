@@ -1,0 +1,48 @@
+# Deploys the cribbage app to Fly.io whenever cribbage changes land on master.
+# Tests run first; nothing is deployed if they fail.
+#
+# One-time setup: create a deploy token with
+#   fly tokens create deploy -a cribbage-with-friends
+# and add it to this repository as an Actions secret named FLY_API_TOKEN
+# (GitHub: Settings > Secrets and variables > Actions > New repository secret).
+name: Deploy cribbage
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'cribbage/**'
+      - '.github/workflows/deploy-cribbage.yml'
+  workflow_dispatch: # lets you run it by hand from the Actions tab
+
+# One deploy at a time; a newer merge waits for the running one instead of cancelling it.
+concurrency:
+  group: deploy-cribbage
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: cribbage
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cribbage/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

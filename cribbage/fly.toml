@@ -1,15 +1,17 @@
-# Fly.io config. Run `fly launch --no-deploy` first to pick an app name and region,
-# then `fly volumes create crib_data --size 1` and `fly deploy`.
-app = "cribbage-change-me"
-primary_region = "ord"
+# Fly.io config for the live app. Deploys run automatically from GitHub when
+# cribbage changes are merged to master (.github/workflows/deploy-cribbage.yml),
+# or by hand with `fly deploy` from this folder.
+#
+# VAPID_SUBJECT (contact address for push notifications) is a Fly secret, set with
+#   fly secrets set VAPID_SUBJECT=mailto:you@example.com
+app = "cribbage-with-friends"
+primary_region = "iad"
 
 [build]
 
 [env]
   PORT = "8080"
   DB_PATH = "/data/cribbage.db"
-  # Contact address push services can reach if your app misbehaves. Change this.
-  VAPID_SUBJECT = "mailto:change-me@example.com"
 
 [mounts]
   source = "crib_data"

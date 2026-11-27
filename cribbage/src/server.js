@@ -5,9 +5,10 @@ import { join, extname, normalize, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openStore } from './store.js';
 import { createPusher, turnNotifications } from './push.js';
-import { nextAutomatic, BOT_NAMES } from './bot.js';
+import { BOT_NAMES } from './bot.js';
 import { computeStats } from './stats.js';
-import { createGame, addPlayer, startGame, discard, play, viewFor, hasTeams, RuleError } from './engine.js';
+import { RuleError } from './engine.js';
+import { gameFor, gameModule, rematchSettings, typeOf, GAMES } from './games.js';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PUBLIC = join(ROOT, 'public');
@@ -120,13 +121,15 @@ const RECENT_MS = 20_000;
 function scheduleBots(id) {
   if (autoTimers.has(id)) return;
   const game = store.get(id);
-  const next = game && nextAutomatic(game, { pace: PACE });
+  const next = game && gameFor(game).nextAutomatic(game, { pace: PACE });
   if (!next) return;
   autoTimers.set(id, setTimeout(() => {
     autoTimers.delete(id);
     const g = store.get(id);
-    const step = g && nextAutomatic(g, { pace: PACE });
+    const step = g && gameFor(g).nextAutomatic(g, { pace: PACE });
     if (!step) return;
+    // A decision timer that moved (the player acted, a new turn began) isn't due yet.
+    if (step.at && step.at > Date.now() + 50) return scheduleBots(id);
     const before = structuredClone(g);
     try {
       if (!step.apply(g)) return;
@@ -136,7 +139,24 @@ function scheduleBots(id) {
     // Don't ping someone about a turn that came back to them seconds after they acted.
     const actor = g.lastActor != null && Date.now() - (g.lastActorAt ?? 0) < RECENT_MS ? g.lastActor : null;
     save(g, before, actor);
-  }, next.delay));
+  }, Math.min(next.delay, 2 ** 31 - 1)));
+}
+
+/** Drop a pending step so it's recomputed (after a human move changes what's next). */
+function rescheduleBots(id) {
+  clearTimeout(autoTimers.get(id));
+  autoTimers.delete(id);
+  scheduleBots(id);
+}
+
+const viewOf = (game, seat) => gameFor(game).view(game, seat);
+
+/** Apply a player's move to the game and save it. */
+function applyMove(game, seat, action) {
+  const before = structuredClone(game);
+  gameFor(game).act(game, seat, action);
+  save(game, before, seat);
+  rescheduleBots(game.id);
 }
 
 function requireSeat(game, req) {
@@ -149,11 +169,12 @@ function requireSeat(game, req) {
 const routes = [
   ['POST', /^\/api\/games$/, async (req, res) => {
     const body = await readJson(req);
+    const mod = gameModule(body.type ?? 'cribbage');
     const numPlayers = Number(body.numPlayers);
     const name = cleanName(body.name);
-    const game = createGame({ id: newGameId(), numPlayers, teams: body.teams !== false });
+    const game = mod.create({ id: newGameId(), numPlayers, settings: { ...body.settings, teams: body.teams } });
     const token = newToken();
-    addPlayer(game, { id: randomUUID(), name, tokenHash: hash(token), playerId: playerIdFor(req) });
+    mod.addPlayer(game, { id: randomUUID(), name, tokenHash: hash(token), playerId: playerIdFor(req) });
     save(game);
     send(res, 201, { id: game.id, token, seat: 0 });
   }],
@@ -163,7 +184,7 @@ const routes = [
     scheduleBots(id); // resumes paused steps after a server restart
     const seat = seatFor(game, req);
     claimSeat(game, seat, req);
-    send(res, 200, viewFor(game, seat));
+    send(res, 200, viewOf(game, seat));
   }],
 
   ['POST', /^\/api\/games\/([a-z0-9]+)\/join$/, async (req, res, [id]) => {
@@ -177,7 +198,7 @@ const routes = [
     }
     const token = newToken();
     const before = structuredClone(game);
-    const seat = addPlayer(game, { id: randomUUID(), name, tokenHash: hash(token), playerId: playerIdFor(req) });
+    const seat = gameFor(game).addPlayer(game, { id: randomUUID(), name, tokenHash: hash(token), playerId: playerIdFor(req) });
     save(game, before, seat);
     send(res, 201, { token, seat });
   }],
@@ -186,20 +207,37 @@ const routes = [
     const game = loadGame(id);
     const seat = requireSeat(game, req);
     const { cards } = await readJson(req);
-    const before = structuredClone(game);
-    discard(game, seat, cards);
-    save(game, before, seat);
-    send(res, 200, viewFor(game, seat));
+    applyMove(game, seat, { type: 'discard', cards });
+    send(res, 200, viewOf(game, seat));
   }],
 
   ['POST', /^\/api\/games\/([a-z0-9]+)\/play$/, async (req, res, [id]) => {
     const game = loadGame(id);
     const seat = requireSeat(game, req);
     const { card } = await readJson(req);
+    applyMove(game, seat, { type: 'play', card });
+    send(res, 200, viewOf(game, seat));
+  }],
+
+  // Any game's move: { action: { type, ... } }
+  ['POST', /^\/api\/games\/([a-z0-9]+)\/act$/, async (req, res, [id]) => {
+    const game = loadGame(id);
+    const seat = requireSeat(game, req);
+    const { action } = await readJson(req);
+    applyMove(game, seat, action);
+    send(res, 200, viewOf(game, seat));
+  }],
+
+  // The host starts before every seat is filled (games that allow it).
+  ['POST', /^\/api\/games\/([a-z0-9]+)\/start$/, async (req, res, [id]) => {
+    const game = loadGame(id);
+    const seat = requireSeat(game, req);
+    if (seat !== 0) throw new HttpError(403, 'Only the host can start the game');
+    if (!gameFor(game).canStartEarly) throw new HttpError(400, 'This game starts when every seat is taken');
     const before = structuredClone(game);
-    play(game, seat, String(card));
+    gameFor(game).start(game);
     save(game, before, seat);
-    send(res, 200, viewFor(game, seat));
+    send(res, 200, viewOf(game, seat));
   }],
 
   ['POST', /^\/api\/games\/([a-z0-9]+)\/rematch$/, async (req, res, [id]) => {
@@ -207,12 +245,14 @@ const routes = [
     const seat = requireSeat(game, req);
     if (game.status !== 'finished') throw new HttpError(400, 'The game is still going');
     if (!game.nextGameId) {
-      const next = createGame({ id: newGameId(), numPlayers: game.numPlayers, teams: hasTeams(game) });
-      // Same people and seats; startGame picks a fresh random dealer.
-      next.players = game.players.map((p) => ({ ...p, joinedAt: Date.now() }));
+      const mod = gameFor(game);
+      const next = mod.create({ id: newGameId(), numPlayers: game.numPlayers, settings: rematchSettings(game) });
       next.previousGameId = game.id;
       const lobby = structuredClone(next);
-      startGame(next);
+      // Same people and seats; the game starts as the last seat fills.
+      for (const p of game.players) {
+        mod.addPlayer(next, { id: p.id, name: p.name, tokenHash: p.tokenHash, bot: p.bot, playerId: p.playerId });
+      }
       next.version = 1;
       store.put(next);
       pusher.notify(next, turnNotifications(lobby, next, seat)).catch(() => {});
@@ -246,17 +286,22 @@ const routes = [
     const seat = requireSeat(game, req);
     if (game.status !== 'lobby') throw new HttpError(400, 'The game has already started');
     const before = structuredClone(game);
+    const { count } = await readJson(req);
     const taken = new Set(game.players.map((p) => p.name.toLowerCase()));
     const names = BOT_NAMES.filter((n) => !taken.has(n.toLowerCase()));
-    while (game.players.length < game.numPlayers) {
-      addPlayer(game, { id: randomUUID(), name: names.shift() ?? `Bot ${game.players.length}`, tokenHash: '', bot: true });
+    const target = count ? Math.min(game.numPlayers, game.players.length + Math.max(1, Number(count) | 0)) : game.numPlayers;
+    while (game.status === 'lobby' && game.players.length < target) {
+      gameFor(game).addPlayer(game, { id: randomUUID(), name: names.shift() ?? `Bot ${game.players.length}`, tokenHash: '', bot: true });
     }
     save(game, before, seat);
-    send(res, 200, viewFor(game, seat));
+    send(res, 200, viewOf(game, seat));
   }],
 
   ['GET', /^\/api\/stats$/, async (req, res) => {
-    send(res, 200, { you: playerIdFor(req), players: computeStats(store.finished()) });
+    const type = new URL(req.url, 'http://x').searchParams.get('game') || 'cribbage';
+    if (!GAMES[type]) throw new HttpError(400, 'Unknown game');
+    const games = store.finished().filter((g) => typeOf(g) === type);
+    send(res, 200, { you: playerIdFor(req), game: type, players: computeStats(games) });
   }],
 
   ['GET', /^\/api\/push\/key$/, async (_req, res) => send(res, 200, { publicKey: pusher.publicKey })],

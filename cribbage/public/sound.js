@@ -132,6 +132,16 @@ export const sfx = {
       snap(t + dt, { freq: 700, q: 1.5, peak: 0.25, decay: 0.04 });
     }
   },
+  /** Chips clicking onto the felt (bets and calls). */
+  chips() {
+    if (!ready()) return;
+    const t = ctx.currentTime;
+    for (let i = 0; i < 4; i++) {
+      const dt = i * 0.045 + Math.random() * 0.02;
+      snap(t + dt, { freq: 4200 + Math.random() * 1800, q: 4, peak: 0.22, decay: 0.035 });
+      tone(2400 + Math.random() * 600, t + dt, { type: 'triangle', peak: 0.03, decay: 0.03 });
+    }
+  },
   /** Gentle two-note ping when it becomes your turn. */
   turn() {
     if (!ready()) return;
