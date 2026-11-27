@@ -555,12 +555,38 @@ h2 { font-size: 20px; margin: 0 0 14px; }
 @media (max-width: 760px) {
   .game .brand span:last-child { display: none; } /* logo only in the game's crowded top bar */
   .game-pick { grid-template-columns: 1fr 1fr; }
-  .game-pick button:disabled { grid-column: 1 / -1; }
+  .game-pick button:last-child { grid-column: 1 / -1; }
   .pk-opponents { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pk-board { gap: 5px; }
   .pk-board .card.md { --w: 52px; }
   .pk-hand .pk-hole { --card-w: 72px; }
 }
+
+/* ---------- Thirty-One ---------- */
+.t1-tokens { display: inline-flex; gap: 3px; align-items: center; font-size: 12px; font-weight: 700; }
+.t1-tokens .coin { width: 11px; height: 11px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #fde68a, #d4a017 60%, #a16207); box-shadow: 0 1px 2px rgba(0,0,0,.5); }
+.t1-tokens .coin.spent { background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 1px rgba(255,255,255,.15); }
+.t1-tokens.honor { color: var(--gold); }
+.t1-tokens.out { color: var(--muted); }
+.knock-badge { font-size: 11px; font-weight: 900; letter-spacing: .08em; padding: 3px 9px; border-radius: 8px; color: #08110d; background: var(--c); rotate: -4deg; box-shadow: 0 0 14px -4px var(--c); }
+.t1-seat.loser { border-color: rgba(255,107,107,.5); }
+.pk-best .lost { color: var(--danger); }
+.t1-felt { padding: 22px 16px; display: grid; justify-items: center; gap: 12px; }
+.t1-piles { display: flex; gap: 34px; align-items: flex-start; }
+.t1-pile { display: grid; justify-items: center; gap: 8px; background: none; border: 0; padding: 6px; border-radius: 14px; cursor: default; color: inherit; }
+.t1-pile.can { cursor: pointer; }
+.t1-pile.can:hover .card, .t1-pile.can:focus-visible .card { translate: 0 -4px; box-shadow: 0 0 0 3px var(--accent), 0 14px 24px -10px rgba(62,224,161,.6); }
+.t1-pile .card { transition: translate .15s, box-shadow .15s; }
+.t1-discard { width: 64px; height: 90px; }
+.t1-discard .card.flip-in { animation: flip-in .5s cubic-bezier(.3, 1.4, .5, 1) both; }
+.t1-pot { display: flex; gap: 6px; align-items: baseline; font-size: 12px; color: rgba(233,242,238,.65); }
+.t1-pot b { font-family: var(--serif); font-size: 20px; color: var(--gold); }
+.t1-value { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 999px; background: rgba(0,0,0,.3); border: 1px solid var(--line-2); font-family: var(--serif); font-weight: 700; font-size: 17px; }
+.suit-chip { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: #f4f6f8; color: #18202b; font-size: 12px; }
+.suit-chip.suit-H, .suit-chip.suit-D { color: #d61f45; }
+:root.four-color .suit-chip.suit-C { color: #138a46; }
+:root.four-color .suit-chip.suit-D { color: #1c5fd4; }
+.hand-card.just-drawn { box-shadow: 0 0 0 2px var(--gold), 0 12px 22px -10px rgba(245,176,65,.6); }
 
 /* ---------- push ---------- */
 .push-banner {

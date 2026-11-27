@@ -19,6 +19,10 @@ import {
   createHoldem, addHoldemPlayer, startHoldem, holdemAct, holdemView, holdemIsTurn,
 } from './holdem.js';
 import { holdemNextAutomatic } from './holdem-bot.js';
+import {
+  createThirtyOne, addThirtyOnePlayer, startThirtyOne, thirtyOneAct, thirtyOneView, thirtyOneIsTurn,
+} from './thirtyone.js';
+import { thirtyOneNextAutomatic } from './thirtyone-bot.js';
 
 export const GAMES = {
   cribbage: {
@@ -55,6 +59,20 @@ export const GAMES = {
     isTurn: holdemIsTurn,
     sideOf: (state, seat) => seat,
   },
+  thirtyone: {
+    name: 'Thirty-One',
+    minPlayers: 2,
+    maxPlayers: 8,
+    canStartEarly: true,
+    create: ({ id, numPlayers, settings }) => createThirtyOne({ id, maxPlayers: numPlayers, settings }),
+    addPlayer: addThirtyOnePlayer,
+    start: startThirtyOne,
+    act: thirtyOneAct,
+    nextAutomatic: thirtyOneNextAutomatic,
+    view: thirtyOneView,
+    isTurn: thirtyOneIsTurn,
+    sideOf: (state, seat) => seat,
+  },
 };
 
 export const typeOf = (state) => state.type ?? 'cribbage';
@@ -68,4 +86,4 @@ export function gameModule(type) {
 
 /** Settings worth carrying into a rematch. */
 export const rematchSettings = (state) =>
-  typeOf(state) === 'holdem' ? state.settings : { teams: state.teams ?? state.numPlayers === 4 };
+  typeOf(state) === 'cribbage' ? { teams: state.teams ?? state.numPlayers === 4 } : state.settings;

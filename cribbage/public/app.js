@@ -8,8 +8,10 @@ import { sfx, soundPrefs, setSoundPref } from './sound.js';
 import {
   holdemTableHTML, bindHoldem, tickTimers, holdemLastHandHTML, holdemOverHTML, seatColor, chips as chipsHTML, ordinal,
 } from './holdem-ui.js';
+import { thirtyOneTableHTML, bindThirtyOne, thirtyOneLastHTML, thirtyOneOverHTML } from './thirtyone-ui.js';
 
-const GAME_NAMES = { cribbage: 'Cribbage', holdem: 'Texas Hold’em' };
+const GAME_NAMES = { cribbage: 'Cribbage', holdem: 'Texas Hold’em', thirtyone: 'Thirty-One' };
+const isCribbage = (v) => (v.type ?? 'cribbage') === 'cribbage';
 const gameName = (v) => GAME_NAMES[v.type ?? 'cribbage'];
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -228,7 +230,7 @@ async function renderLeaders() {
   if (!el) return;
   const rows = data.players;
   if (!rows.length) {
-    el.innerHTML = `<div class="empty"><p>No finished ${GAME_NAMES[leaderGame]} games yet. Records show up here when a game ends${leaderGame === 'holdem' ? ' (one player holds every chip)' : ' (someone reaches 121)'}.</p></div>`;
+    el.innerHTML = `<div class="empty"><p>No finished ${GAME_NAMES[leaderGame]} games yet. Records show up here when a game ends${leaderGame === 'holdem' ? ' (one player holds every chip)' : leaderGame === 'thirtyone' ? ' (one player is left)' : ' (someone reaches 121)'}.</p></div>`;
     return;
   }
   const me = rows.find((p) => p.id === data.you);
@@ -256,7 +258,7 @@ async function renderLeaders() {
             <b>${o.wins}–${o.losses}</b></li>`).join('') || '<li class="muted">No opponents yet</li>'}</ul>
         </div></td></tr>`).join('')}
       </tbody></table></div>
-    <p class="hint">${leaderGame === 'holdem' ? 'A tournament win beats everyone at the table; everyone else records a loss to the winner.' : 'Team games count as a win for both partners. In 3- and 4-player games the winner beats everyone at the table.'} Records follow each browser's player; use “Move your games to another device” on the home page to keep one record across your phone and computer.</p>`;
+    <p class="hint">${leaderGame !== 'cribbage' ? 'The winner (last one standing) beats everyone at the table; everyone else records a loss to the winner.' : 'Team games count as a win for both partners. In 3- and 4-player games the winner beats everyone at the table.'} Records follow each browser's player; use “Move your games to another device” on the home page to keep one record across your phone and computer.</p>`;
   for (const row of el.querySelectorAll('.lb-row')) {
     const toggle = () => {
       const detail = row.nextElementSibling;
@@ -273,14 +275,14 @@ function renderHome() {
   // Cribbage formats: [key, label, players, teams]
   const MODES = [['2', '2', 2, false], ['3', '3', 3, false], ['4', '4', 4, false], ['4t', '2 v 2', 4, true]];
   let mode = MODES[0];
-  let game = data.lastGame === 'holdem' ? 'holdem' : 'cribbage';
+  let game = GAME_NAMES[data.lastGame] ? data.lastGame : 'cribbage';
   const sel = (id, opts, value) => `<select id="${id}">${opts.map(([v, l]) => `<option value="${v}" ${String(v) === String(value) ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
   app.innerHTML = `
     <div class="home">
       <header class="topbar">${brand}<div class="top-actions"><a class="btn ghost" href="/leaders" data-link>🏆 Leaderboard</a></div></header>
       <section class="hero">
         <h1>Card games with your friends,<br><span class="grad">wherever they are.</span></h1>
-        <p>Cribbage you can play on your own time, and Texas Hold’em for game night. Every game saves itself.</p>
+        <p>Cribbage and Thirty-One you can play on your own time, and Texas Hold’em for game night. Every game saves itself.</p>
       </section>
       <div class="home-grid">
         <form class="panel create" id="create">
@@ -288,7 +290,7 @@ function renderHome() {
           <div class="game-pick" role="radiogroup" aria-label="Game">
             <button type="button" role="radio" data-game="cribbage" aria-checked="${game === 'cribbage'}"><span class="gp-icon">♣</span><b>Cribbage</b><small>2–4 players · play anytime</small></button>
             <button type="button" role="radio" data-game="holdem" aria-checked="${game === 'holdem'}"><span class="gp-icon">♠</span><b>Texas Hold’em</b><small>2–9 players · play live</small></button>
-            <button type="button" disabled title="Coming soon"><span class="gp-icon">31</span><b>Thirty-One</b><small>Coming soon</small></button>
+            <button type="button" role="radio" data-game="thirtyone" aria-checked="${game === 'thirtyone'}"><span class="gp-icon">31</span><b>Thirty-One</b><small>2–8 players · play anytime</small></button>
           </div>
           <label class="field"><span>Your name</span>
             <input name="name" maxlength="20" autocomplete="nickname" placeholder="e.g. Sam" value="${esc(data.name)}" required></label>
@@ -311,6 +313,13 @@ function renderHome() {
               <label class="field"><span>Time to act</span>${sel('he-timer', [[30, '30 seconds'], [60, '60 seconds'], [120, '2 minutes']], 60)}</label>
             </div>
             <small class="hint">Tournament: everyone starts equal, blinds double on schedule, last player with chips wins. When time runs out you check, or fold if there’s a bet. The host can start before every seat fills.</small>
+          </div>
+          <div id="opts-thirtyone" class="game-opts" ${game === 'thirtyone' ? '' : 'hidden'}>
+            <div class="opt-grid">
+              <label class="field"><span>Seats</span>${sel('t1-seats', [2, 3, 4, 5, 6, 7, 8].map((n) => [n, `${n} players`]), 4)}</label>
+              <label class="field"><span>Tokens each</span>${sel('t1-tokens', [[3, '3 (quick)'], [6, '6 (standard)'], [9, '9 (long)']], 6)}</label>
+            </div>
+            <small class="hint">Get as close to 31 in one suit as you can. Knock when you’re happy; lowest hand loses a token (a knocker who’s lowest loses 2). Hit 31 and everyone else pays. Out of tokens, you’re on your honor; lose again and you’re out.</small>
           </div>
           ${LOCAL ? '' : '<button class="btn primary big" type="submit">Create game &amp; get invite link</button>'}
           <button class="btn ${LOCAL ? 'primary' : ''} big" type="button" id="vs-bot">🤖 ${LOCAL ? 'Start a game' : 'Play bots right now'}</button>
@@ -350,6 +359,7 @@ function renderHome() {
       app.querySelectorAll('.game-pick [data-game]').forEach((x) => x.setAttribute('aria-checked', x === b));
       $('#opts-cribbage').hidden = game !== 'cribbage';
       $('#opts-holdem').hidden = game !== 'holdem';
+      $('#opts-thirtyone').hidden = game !== 'thirtyone';
     };
   }
   $('#he-stack').onchange = () => ($('#he-stack-custom-wrap').hidden = $('#he-stack').value !== 'custom');
@@ -357,6 +367,7 @@ function renderHome() {
 
   function newGameBody(name) {
     if (game === 'cribbage') return { type: 'cribbage', name, numPlayers: mode[2], teams: mode[3] };
+    if (game === 'thirtyone') return { type: 'thirtyone', name, numPlayers: Number($('#t1-seats').value), settings: { tokens: Number($('#t1-tokens').value) } };
     const stack = $('#he-stack').value === 'custom' ? Number($('#he-stack-custom').value) : Number($('#he-stack').value);
     const bb = $('#he-blinds').value === 'custom' ? Number($('#he-bb-custom').value) : Number($('#he-blinds').value);
     return {
@@ -380,7 +391,7 @@ function renderHome() {
       go(`/g/${id}`);
     } catch (err) {
       toast(err.message);
-      form.querySelectorAll('button:not([title="Coming soon"])').forEach((b) => (b.disabled = false));
+      form.querySelectorAll('button').forEach((b) => (b.disabled = false));
     }
   }
   $('#vs-bot').onclick = () => create(true);
@@ -432,13 +443,14 @@ function gameRow(v) {
       <button class="icon-btn" data-forget="${esc(v.id)}" title="Remove">✕</button></div>`;
   }
   const holdem = v.type === 'holdem';
+  const solo = !isCribbage(v); // every seat plays alone
   const others = v.players.filter((p) => p.seat !== v.you).map((p) => p.name);
   const title = others.length ? `vs ${others.join(', ')}` : 'Waiting for players';
   let status;
   if (v.status === 'lobby') status = `<span class="pill">Lobby · ${v.players.length}/${v.numPlayers}</span>`;
   else if (v.status === 'finished') {
-    const won = v.you !== null && (holdem ? v.winner === v.you : v.players[v.you].side === v.winner);
-    status = `<span class="pill ${won ? 'win' : ''}">${won ? 'You won' : holdem && v.you !== null ? `Finished ${ordinal(v.players[v.you].place)}` : 'Finished'}</span>`;
+    const won = v.you !== null && (solo ? v.winner === v.you : v.players[v.you].side === v.winner);
+    status = `<span class="pill ${won ? 'win' : ''}">${won ? 'You won' : solo && v.you !== null ? `Finished ${ordinal(v.players[v.you].place)}` : 'Finished'}</span>`;
   } else if (v.yourTurn) status = `<span class="pill turn">Your turn</span>`;
   else {
     const waiting = v.players.filter((p) => p.isTurn).map((p) => p.name);
@@ -446,10 +458,11 @@ function gameRow(v) {
   }
   let scores = '';
   if (v.status !== 'lobby' && holdem && v.you !== null) scores = `<span class="row-scores">${chipsHTML(v.players[v.you].stack)}</span>`;
-  else if (v.status !== 'lobby' && !holdem) {
+  else if (v.status !== 'lobby' && v.type === 'thirtyone' && v.you !== null) scores = `<span class="row-scores">${v.players[v.you].onHonor ? 'On honor' : `${v.players[v.you].tokens} tokens`}</span>`;
+  else if (v.status !== 'lobby' && isCribbage(v)) {
     scores = `<span class="row-scores">${v.scores.map((s, i) => `<span style="--c:${SIDE_COLORS[i]}">${s}</span>`).join('<i>·</i>')}</span>`;
   }
-  const kind = holdem ? `Hold’em · ${v.numPlayers} players` : `Cribbage · ${v.teams ? '2 v 2' : `${v.numPlayers}-player`}`;
+  const kind = holdem ? `Hold’em · ${v.numPlayers} players` : v.type === 'thirtyone' ? `Thirty-One · ${v.numPlayers} players` : `Cribbage · ${v.teams ? '2 v 2' : `${v.numPlayers}-player`}`;
   return `<a class="game-row ${v.yourTurn ? 'is-turn' : ''}" href="/g/${v.id}" data-link>
     <div><b>${esc(title)}</b><small>${kind} · updated ${timeAgo(v.updatedAt)}</small></div>
     <div class="row-right">${scores}${status}<button class="icon-btn" data-forget="${v.id}" title="Remove from list">✕</button></div></a>`;
@@ -576,6 +589,8 @@ function mountGame(id) {
     seenBoard: new Set(),
     dealtHand: null,
     raiseTo: null,
+    t1Selected: null,
+    lastTop: null,
     clockOffset: 0,
     soundOpen: false,
     boardSides: 0,
@@ -647,7 +662,8 @@ function mountGame(id) {
       const later = (fn) => setTimeout(fn, delay);
       const who = e.seat != null ? v.players[e.seat] : null;
       if (e.card) later(() => sfx.card());
-      if (e.kind === 'hand') later(() => sfx.deal(v.type === 'holdem' ? Math.min(10, v.numPlayers * 2) : v.numPlayers === 2 ? 6 : 5));
+      if (e.kind === 'hand') later(() => sfx.deal(v.type === 'holdem' ? Math.min(10, v.numPlayers * 2) : v.type === 'thirtyone' ? Math.min(10, v.numPlayers * 3) : v.numPlayers === 2 ? 6 : 5));
+      if (e.kind === 'draw-stock' || e.kind === 'draw-discard') later(() => sfx.card());
       if (e.kind === 'street') later(() => sfx.deal(e.street === 'flop' ? 3 : 1));
       if (e.kind === 'poker-call' || e.kind === 'poker-raise') later(() => sfx.chips());
       if (e.kind === 'poker-check') later(() => sfx.tick(0));
@@ -656,8 +672,8 @@ function mountGame(id) {
       // In Hold'em only the big moments get a callout (not every check and fold).
       const loud = v.type !== 'holdem' || ['poker-raise', 'poker-win', 'poker-out'].includes(e.kind) || e.calls?.some((c) => c.label.startsWith('All in'));
       if (e.calls?.length && who && loud) {
-        const is31 = e.calls.some((c) => c.label === '31');
-        const isGo = e.kind === 'go';
+        const is31 = e.calls.some((c) => c.label.startsWith('31'));
+        const isGo = e.kind === 'go' || e.kind === 'knock'; // a knock is a knock on the table
         later(() => {
           if (is31) sfx.thirtyOne();
           else if (isGo) sfx.go();
@@ -835,8 +851,8 @@ function mountGame(id) {
     if (v.you === null && v.status === 'lobby') return renderJoin(v);
     renderTopbar(v);
     renderPushBanner(v);
-    const holdem = v.type === 'holdem';
-    if (holdem) {
+    const crib = isCribbage(v);
+    if (!crib) {
       $('#scores').innerHTML = '';
       $('#board').innerHTML = '';
       G.boardSides = 0;
@@ -844,13 +860,18 @@ function mountGame(id) {
       renderScores(v);
       renderBoard(v);
     }
-    const before = holdem ? null : snapshotTable();
-    $('#table').innerHTML = v.status === 'lobby' ? lobbyHTML(v) : holdem ? holdemTableHTML(v, G) : tableHTML(v);
-    if (!holdem) animateTable(before, G.animView, v);
+    const before = crib ? snapshotTable() : null;
+    const table = v.status === 'lobby' ? lobbyHTML(v)
+      : v.type === 'holdem' ? holdemTableHTML(v, G)
+      : v.type === 'thirtyone' ? thirtyOneTableHTML(v, G)
+      : tableHTML(v);
+    $('#table').innerHTML = table;
+    if (crib) animateTable(before, G.animView, v);
     G.animView = v;
     $('#side').innerHTML = sideHTML(v);
     bindTable(v);
-    if (holdem && v.status !== 'lobby') bindHoldem(v, G, act);
+    if (v.status !== 'lobby' && v.type === 'holdem') bindHoldem(v, G, act);
+    if (v.status !== 'lobby' && v.type === 'thirtyone') bindThirtyOne(v, G, act, render);
     tickTimers(v, G.clockOffset);
     renderOverlay(v);
   }
@@ -959,6 +980,7 @@ function mountGame(id) {
     const showBell = !LOCAL && v.you !== null && (avail === 'ready' || avail === 'ios-install');
     const meta = v.status === 'lobby' ? `${gameName(v)} · Lobby`
       : v.type === 'holdem' ? `Hold’em · Hand ${v.handNo} · Blinds ${v.sb.toLocaleString()}/${v.bb.toLocaleString()}`
+      : v.type === 'thirtyone' ? `Thirty-One · Round ${v.handNo} · ${esc(v.players[v.dealer].name)} deals`
       : `Hand ${v.handNo} · ${esc(v.players[v.dealer].name)} deals`;
     $('#topbar').innerHTML = `${brand}
       <div class="top-meta">${meta}</div>
@@ -1036,8 +1058,8 @@ function mountGame(id) {
     $('#table').innerHTML = `
       <form class="panel join" id="join">
         <div class="join-cards">${cardHTML('JH', { cls: 'tilt-l' })}${cardHTML('5S')}${cardHTML('5D', { cls: 'tilt-r' })}</div>
-        <h1>You’re invited to ${v.type === 'holdem' ? 'Texas Hold’em' : 'cribbage'}</h1>
-        <p class="muted">${esc(v.players.map((p) => p.name).join(', '))} ${v.players.length === 1 ? 'is' : 'are'} waiting · ${v.players.length}/${v.numPlayers} players${v.type === 'holdem' ? ` · ${v.settings.startingStack.toLocaleString()} chips, blinds ${v.sb}/${v.bb}` : ''}</p>
+        <h1>You’re invited to ${isCribbage(v) ? 'cribbage' : gameName(v)}</h1>
+        <p class="muted">${esc(v.players.map((p) => p.name).join(', '))} ${v.players.length === 1 ? 'is' : 'are'} waiting · ${v.players.length}/${v.numPlayers} players${v.type === 'holdem' ? ` · ${v.settings.startingStack.toLocaleString()} chips, blinds ${v.sb}/${v.bb}` : v.type === 'thirtyone' ? ` · ${v.settings.tokens} tokens each` : ''}</p>
         ${full ? '<p>This game is full.</p>' : `
         <label class="field"><span>Your name</span><input name="name" maxlength="20" required autocomplete="nickname" value="${esc(local.read().name)}" placeholder="e.g. Alex"></label>
         <button class="btn primary big" type="submit">Take a seat</button>`}
@@ -1063,7 +1085,7 @@ function mountGame(id) {
     const link = `${location.origin}/g/${id}`;
     const seats = Array.from({ length: v.numPlayers }, (_, i) => {
       const p = v.players[i];
-      if (v.type === 'holdem') {
+      if (!isCribbage(v)) {
         return p
           ? `<li class="seat-row filled"><span class="avatar" style="--c:${seatColor(i)}">${esc(p.name[0].toUpperCase())}</span><b>${esc(p.name)}${p.bot ? ' 🤖' : ''}${p.seat === v.you ? ' <span class="muted">(you)</span>' : ''}</b>${i === 0 ? '<span class="team" style="--c:var(--gold)">Host</span>' : ''}</li>`
           : '<li class="seat-row"><span class="avatar empty">?</span><span class="muted">Open seat</span></li>';
@@ -1073,12 +1095,14 @@ function mountGame(id) {
         ? `<li class="seat-row filled"><span class="avatar" style="--c:${SIDE_COLORS[v.teams ? i % 2 : i]}">${esc(p.name[0].toUpperCase())}</span><b>${esc(p.name)}${p.bot ? ' 🤖' : ''}${p.seat === v.you ? ' <span class="muted">(you)</span>' : ''}</b>${team}</li>`
         : `<li class="seat-row"><span class="avatar empty">?</span><span class="muted">Open seat</span>${team}</li>`;
     }).join('');
-    const holdem = v.type === 'holdem';
+    const holdem = !isCribbage(v); // Hold'em and Thirty-One: seat as many as you like, host starts
     const st = v.settings;
     return `
       <div class="panel lobby">
-        <h2>${holdem ? `Texas Hold’em · ${v.players.length} of ${v.numPlayers} seated` : `Waiting for ${v.numPlayers - v.players.length} more player${v.numPlayers - v.players.length > 1 ? 's' : ''}`}</h2>
-        <p class="muted">${holdem
+        <h2>${holdem ? `${gameName(v)} · ${v.players.length} of ${v.numPlayers} seated` : `Waiting for ${v.numPlayers - v.players.length} more player${v.numPlayers - v.players.length > 1 ? 's' : ''}`}</h2>
+        <p class="muted">${v.type === 'thirtyone'
+          ? `${st.tokens} tokens each. Send the link; ${v.you === 0 ? 'you can start' : 'the host can start'} once 2 or more are seated, or it starts when every seat fills.`
+          : holdem
           ? `${st.startingStack.toLocaleString()} chips each · blinds ${st.smallBlind}/${st.bigBlind}${st.levelHands ? `, doubling every ${st.levelHands} hands` : ''} · ${st.actionSeconds}s to act. Send the link; ${v.you === 0 ? 'you can start' : 'the host can start'} once 2 or more are seated, or it starts when every seat fills.`
           : 'Send this link to your friends. The game starts automatically once every seat is taken.'}</p>
         <div class="invite-box"><input readonly value="${esc(link)}" id="invite-link"><button class="btn primary" id="copy-invite">Copy</button>
@@ -1294,8 +1318,11 @@ function mountGame(id) {
   // --- sidebar ---------------------------------------------------------------
   function sideHTML(v) {
     const tabs = `<div class="tabs"><button data-tab="activity" class="${G.tab === 'activity' ? 'on' : ''}">Activity</button>
-      <button data-tab="last" class="${G.tab === 'last' ? 'on' : ''}" ${v.lastHand ? '' : 'disabled'}>Last hand</button></div>`;
-    if (G.tab === 'last' && v.lastHand) return tabs + `<div class="side-body">${v.type === 'holdem' ? holdemLastHandHTML(v) : lastHandHTML(v)}</div>`;
+      <button data-tab="last" class="${G.tab === 'last' ? 'on' : ''}" ${v.lastHand || v.lastRound ? '' : 'disabled'}>${v.type === 'thirtyone' ? 'Last round' : 'Last hand'}</button></div>`;
+    if (G.tab === 'last' && (v.lastHand || v.lastRound)) {
+      const body = v.type === 'holdem' ? holdemLastHandHTML(v) : v.type === 'thirtyone' ? thirtyOneLastHTML(v) : lastHandHTML(v);
+      return tabs + `<div class="side-body">${body}</div>`;
+    }
     let hand = null;
     const items = [...v.log].reverse().map((e) => {
       const sep = e.hand !== hand ? (hand = e.hand, `<li class="log-sep">${e.hand ? `Hand ${e.hand}` : 'Setup'}</li>`) : '';
@@ -1344,10 +1371,10 @@ function mountGame(id) {
     ov.dataset.state = `over-${v.version}`;
     const won = v.you === v.winner;
     ov.innerHTML = `<div class="modal-bg"><div class="modal panel over">
-      <div class="trophy">${won ? '🏆' : '♠'}</div>
-      <h2>${won ? 'You won the tournament!' : `${esc(v.players[v.winner].name)} wins`}</h2>
-      <p class="muted">${v.handNo} hands · blinds reached ${v.sb.toLocaleString()}/${v.bb.toLocaleString()}</p>
-      ${holdemOverHTML(v)}
+      <div class="trophy">${won ? '🏆' : v.type === 'thirtyone' ? '31' : '♠'}</div>
+      <h2>${won ? (v.type === 'holdem' ? 'You won the tournament!' : 'You won!') : `${esc(v.players[v.winner].name)} wins`}</h2>
+      <p class="muted">${v.type === 'holdem' ? `${v.handNo} hands · blinds reached ${v.sb.toLocaleString()}/${v.bb.toLocaleString()}` : `${v.handNo} rounds`}</p>
+      ${v.type === 'holdem' ? holdemOverHTML(v) : thirtyOneOverHTML(v)}
       <div class="modal-actions">
         ${v.you !== null ? `<button class="btn primary big" id="rematch">${v.nextGameId ? 'Go to rematch' : 'Rematch'}</button>` : ''}
         <button class="btn ghost" id="close-ov">View table</button></div></div></div>`;
@@ -1369,7 +1396,7 @@ function mountGame(id) {
   function renderOverlay(v) {
     const ov = $('#overlay');
     const seen = local.read().seenHands[id] || 0;
-    if (v.type === 'holdem') return renderHoldemOverlay(v, ov);
+    if (!isCribbage(v)) return renderHoldemOverlay(v, ov);
     if (v.status === 'finished') {
       const won = v.you !== null && v.players[v.you].side === v.winner;
       const losers = v.scores.map((s, i) => [s, i]).filter(([, i]) => i !== v.winner);
@@ -1450,7 +1477,7 @@ function mountGame(id) {
   const timerTick = setInterval(() => tickTimers(G.view, G.clockOffset), 250);
   const onVis = () => !document.hidden && refresh();
   document.addEventListener('visibilitychange', onVis);
-  const onResize = () => G.view && G.view.type !== 'holdem' && G.view.status !== 'lobby' && G.view.you !== null && renderBoard(G.view);
+  const onResize = () => G.view && isCribbage(G.view) && G.view.status !== 'lobby' && G.view.you !== null && renderBoard(G.view);
   window.addEventListener('resize', onResize);
 
   return () => {

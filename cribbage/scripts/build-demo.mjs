@@ -23,6 +23,9 @@ const copies = {
   'holdem-bot.js': 'src/holdem-bot.js',
   'poker-hands.js': 'src/poker-hands.js',
   'holdem-ui.js': 'public/holdem-ui.js',
+  'thirtyone.js': 'src/thirtyone.js',
+  'thirtyone-bot.js': 'src/thirtyone-bot.js',
+  'thirtyone-ui.js': 'public/thirtyone-ui.js',
   'local-backend.js': 'demo/local-backend.js',
 };
 for (const [to, from] of Object.entries(copies)) copyFileSync(join(root, from), join(out, to));

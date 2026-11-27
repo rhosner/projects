@@ -10,8 +10,8 @@
 // - Games against people and games against bots are counted separately.
 import { sideOf as cribbageSide } from './engine.js';
 
-// Hold'em seats play alone; cribbage may have teams.
-const sideOf = (g, seat) => (g.type === 'holdem' ? seat : cribbageSide(g, seat));
+// Only cribbage has teams; in every other game each seat plays alone.
+const sideOf = (g, seat) => (g.type && g.type !== 'cribbage' ? seat : cribbageSide(g, seat));
 
 export function computeStats(games) {
   const players = new Map();

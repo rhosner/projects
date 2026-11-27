@@ -2,6 +2,7 @@
 import webpush from 'web-push';
 import { isTurn, sideOf } from './engine.js';
 import { holdemIsTurn, options as holdemOptions } from './holdem.js';
+import { thirtyOneIsTurn } from './thirtyone.js';
 
 /**
  * Decide who should hear about a state change.
@@ -10,6 +11,7 @@ import { holdemIsTurn, options as holdemOptions } from './holdem.js';
  */
 export function turnNotifications(before, after, actorSeat) {
   if (after.type === 'holdem') return holdemNotifications(before, after, actorSeat);
+  if (after.type === 'thirtyone') return thirtyOneNotifications(before, after, actorSeat);
   const out = [];
   const names = after.players.map((p) => p.name);
   const others = (seat) => names.filter((_, i) => i !== seat).join(', ');
@@ -45,6 +47,31 @@ export function turnNotifications(before, after, actorSeat) {
     }
     out.push({ seat, title: 'Your turn in cribbage', body });
   }
+  return out;
+}
+
+const cardName = (c) => `${c[0] === 'T' ? '10' : c[0]}${{ S: '♠', H: '♥', D: '♦', C: '♣' }[c[1]]}`;
+
+function thirtyOneNotifications(before, after, actorSeat) {
+  const out = [];
+  if (after.status === 'finished' && before.status !== 'finished') {
+    const w = after.players[after.winner];
+    after.players.forEach((p, seat) => {
+      if (seat === actorSeat || p.bot) return;
+      out.push({ seat, title: seat === after.winner ? 'You won at Thirty-One! 🏆' : 'Thirty-One game over', body: `${w.name} is the last one standing.` });
+    });
+    return out;
+  }
+  after.players.forEach((p, seat) => {
+    if (seat === actorSeat || p.bot) return;
+    const was = before.status === 'playing' && thirtyOneIsTurn(before, seat);
+    if (!thirtyOneIsTurn(after, seat) || was) return;
+    const top = after.discard.at(-1);
+    const body = after.knocker !== null
+      ? `${after.players[after.knocker].name} knocked. This is your last turn.`
+      : `Top of the discard pile: ${top ? cardName(top) : 'empty'}.`;
+    out.push({ seat, title: 'Your turn in Thirty-One', body });
+  });
   return out;
 }
 

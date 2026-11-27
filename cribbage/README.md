@@ -1,6 +1,17 @@
 # Card Night
 
-Card games for friends: **cribbage** you can play on your own time, and **Texas Hold'em** for playing live. Pick the game when you create one; invites, notifications, sound and the leaderboard work the same for both. (Thirty-One is planned.)
+Card games for friends: **cribbage** and **Thirty-One** you can play on your own time, and **Texas Hold'em** for playing live. Pick the game when you create one; invites, notifications, sound and the leaderboard work the same for all three.
+
+## Thirty-One
+
+2–8 players, Bicycle rules. Get your hand as close to 31 as you can in a single suit (Ace 11, faces 10).
+
+- **Turn:** knock (in place of your turn), or draw from the deck or the discard pile and then discard. Tap the deck or the discard to draw; while holding four cards, hovering a card shows what your hand is worth if you discard it.
+- **Knock:** everyone else gets one more turn, then the lowest hand loses a token; a knocker with the lowest hand loses 2.
+- **31** at any time, including the deal, wins the round at once; everyone else loses a token.
+- **Tokens:** 6 each by default (3 or 9 when creating a game). At 0 you're on your honor; lose again and you're out. Last player in wins.
+- **Cases the rules leave open, as implemented:** ties for lowest all lose (a tied knocker loses 2); each token lost counts as a loss (a knocker with 1 token losing 2 goes straight out); you can't throw back the card you just took from the discard pile; an empty deck is rebuilt from the discard pile; the deal passes left each round; if everyone left would go out in the same round, nobody does and play continues.
+- **Bot** takes the discard when it clearly helps, keeps its best three, and knocks at 27+ (25+ once a round drags on).
 
 ## Texas Hold'em
 
