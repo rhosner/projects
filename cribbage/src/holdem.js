@@ -14,7 +14,7 @@
 // - Decision timer: when it runs out the player checks if possible, else folds.
 //   After two timeouts in a row they're "away" and auto-act quickly until they act.
 import { newDeck, shuffle, randomInt, RuleError } from './engine.js';
-import { bestHand, compareScores } from './poker-hands.js';
+import { bestHand, compareScores, pokerRank } from './poker-hands.js';
 
 export const HOLDEM_DEFAULTS = { startingStack: 1500, smallBlind: 10, bigBlind: 20, levelHands: 10, actionSeconds: 60 };
 const AWAY_SECONDS = 4;
@@ -487,6 +487,18 @@ export function holdemIsTurn(state, seat) {
   return state.status === 'playing' && state.phase === 'betting' && !state.hand.roundDone && state.hand.toAct === seat;
 }
 
+const RANK_WORD = { 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five', 6: 'Six', 7: 'Seven', 8: 'Eight', 9: 'Nine', 10: 'Ten', 11: 'Jack', 12: 'Queen', 13: 'King', 14: 'Ace' };
+const PLURAL = { Six: 'Sixes' };
+
+/** What your hand is right now: the best five-card hand once there's a flop, or your two cards before it. */
+export function yourHandName(hole, board) {
+  if (!hole || hole.length < 2) return null;
+  if (board.length >= 3) return bestHand([...hole, ...board]).name;
+  const [a, b] = [pokerRank(hole[0]), pokerRank(hole[1])].sort((x, y) => y - x);
+  if (a === b) return `Pocket ${PLURAL[RANK_WORD[a]] ?? `${RANK_WORD[a]}s`}`;
+  return `${RANK_WORD[a]}-${RANK_WORD[b]}${hole[0][1] === hole[1][1] ? ' suited' : ''}`;
+}
+
 // ---------------------------------------------------------------------------
 // Per-player view
 // ---------------------------------------------------------------------------
@@ -531,6 +543,7 @@ export function holdemView(state, seat) {
     })),
     you: me,
     hand: me !== null && h ? h.hole[me] : [],
+    yourHandName: me !== null && h && !h.folded[me] ? yourHandName(h.hole[me], state.board) : null,
     board: state.board,
     street: h?.street ?? null,
     pot: h ? h.committed.reduce((a, b) => a + b, 0) : 0,

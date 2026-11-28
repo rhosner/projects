@@ -615,6 +615,7 @@ function mountGame(id) {
         <section class="main-col">
           <div id="callouts" aria-live="polite"></div>
           <div id="push-banner"></div>
+          <div id="over-bar"></div>
           <div class="scores" id="scores"></div>
           <div class="board-wrap" id="board"></div>
           <div id="table"><div class="loading"><div class="spinner"></div></div></div>
@@ -862,6 +863,7 @@ function mountGame(id) {
     if (v.you === null && v.status === 'lobby') return renderJoin(v);
     renderTopbar(v);
     renderPushBanner(v);
+    renderOverBar(v);
     const crib = isCribbage(v);
     if (!crib) {
       $('#scores').innerHTML = '';
@@ -1276,9 +1278,23 @@ function mountGame(id) {
     }
     const keptNote = v.phase === 'pegging' && v.kept ? `<div class="kept">Your hand for the show: ${miniCards(sortCards(v.kept))}</div>` : '';
 
+    // Your hand's points: as you pick crib cards, then before and after the cut.
+    let pts = '';
+    const yp = v.yourPoints;
+    if (yp?.keep && canDiscard) {
+      const k = v.discardCount;
+      pts = G.selected.length === k
+        ? `<span class="pts-pill">Keeping these: <b>${yp.keep[[...G.selected].sort().join(',')]}</b> pts before the cut</span>`
+        : `<span class="pts-pill quiet">Pick ${k === 1 ? 'a card' : `${k} cards`} to throw to see your points</span>`;
+    } else if (yp && !yp.keep) {
+      pts = yp.withStarter != null
+        ? `<span class="pts-pill">Your hand: <b>${yp.withStarter}</b> pts</span>`
+        : `<span class="pts-pill">Your hand: <b>${yp.hand}</b> pts + the cut</span>`;
+    }
+
     return `<div class="me ${v.yourTurn ? 'turn' : ''}" style="--c:${SIDE_COLORS[me.side]}">
       <div class="me-head"><span class="avatar" style="--c:${SIDE_COLORS[me.side]}">${esc(me.name[0].toUpperCase())}</span><b>${esc(me.name)}</b>
-        ${v.dealer === v.you ? '<span class="dealer">D</span>' : ''}${me.saidGo && v.phase === 'pegging' ? goBadge(me) : ''}</div>
+        ${pts}${v.dealer === v.you ? '<span class="dealer">D</span>' : ''}${me.saidGo && v.phase === 'pegging' ? goBadge(me) : ''}</div>
       <div class="hand ${G.dealtKey !== `${v.handNo}` ? 'deal' : ''}">${cards || '<span class="muted">No cards in hand</span>'}</div>
       <div class="actions">${action}</div>
       ${keptNote}
@@ -1402,14 +1418,46 @@ function mountGame(id) {
       </div>`;
   }
 
+  async function rematch() {
+    try {
+      const { id: next } = await api(`/games/${id}/rematch`, { method: 'POST', gameId: id });
+      local.remember(next, local.token(id));
+      go(`/g/${next}`);
+    } catch (err) {
+      toast(err.message);
+    }
+  }
+
+  // After the game-over screen is closed, this bar keeps the result and the way to a rematch on the table.
+  function renderOverBar(v) {
+    const el = $('#over-bar');
+    if (v.status !== 'finished') {
+      el.innerHTML = '';
+      return;
+    }
+    const youWon = v.you !== null && (isCribbage(v) ? v.players[v.you].side === v.winner : v.winner === v.you);
+    const who = isCribbage(v) ? `${esc(sideLabel(v, v.winner))} won` : `${esc(v.players[v.winner].name)} won`;
+    el.innerHTML = `<div class="over-bar">
+      <span class="ob-icon">🏆</span>
+      <div class="ob-text"><b>${youWon ? 'You won!' : who}</b><span>Game over${v.nextGameId ? ' · a rematch is ready' : ''}</span></div>
+      <button class="btn ghost" id="bar-results">Show results</button>
+      ${v.you !== null ? `<button class="btn primary" id="bar-rematch">${v.nextGameId ? 'Go to rematch' : 'Rematch'}</button>` : ''}
+    </div>`;
+    $('#bar-results').onclick = () => {
+      $('#overlay').dataset.state = '';
+      renderOverlay(v);
+    };
+    if ($('#bar-rematch')) $('#bar-rematch').onclick = rematch;
+  }
+
   function renderHoldemOverlay(v, ov) {
     if (v.status !== 'finished') {
-      if (ov.dataset.state?.startsWith('over-')) ov.innerHTML = '';
+      if (ov.dataset.state?.startsWith('over')) ov.innerHTML = '';
       if (ov.dataset.state !== 'ios-help') ov.dataset.state = '';
       return;
     }
-    if (ov.dataset.state === `over-${v.version}`) return;
-    ov.dataset.state = `over-${v.version}`;
+    if (ov.dataset.state === 'over' || ov.dataset.state === 'over-closed') return;
+    ov.dataset.state = 'over';
     const won = v.you === v.winner;
     ov.innerHTML = `<div class="modal-bg"><div class="modal panel over">
       <div class="trophy">${won ? '🏆' : v.type === 'thirtyone' ? '31' : '♠'}</div>
@@ -1419,19 +1467,11 @@ function mountGame(id) {
       <div class="modal-actions">
         ${v.you !== null ? `<button class="btn primary big" id="rematch">${v.nextGameId ? 'Go to rematch' : 'Rematch'}</button>` : ''}
         <button class="btn ghost" id="close-ov">View table</button></div></div></div>`;
-    $('#close-ov').onclick = () => (ov.innerHTML = '');
-    const r = $('#rematch');
-    if (r) {
-      r.onclick = async () => {
-        try {
-          const { id: next } = await api(`/games/${id}/rematch`, { method: 'POST', gameId: id });
-          local.remember(next, local.token(id));
-          go(`/g/${next}`);
-        } catch (err) {
-          toast(err.message);
-        }
-      };
-    }
+    $('#close-ov').onclick = () => {
+      ov.innerHTML = '';
+      ov.dataset.state = 'over-closed';
+    };
+    if ($('#rematch')) $('#rematch').onclick = rematch;
   }
 
   function renderOverlay(v) {
@@ -1443,8 +1483,8 @@ function mountGame(id) {
       const losers = v.scores.map((s, i) => [s, i]).filter(([, i]) => i !== v.winner);
       const worst = Math.min(...losers.map(([s]) => s));
       const skunk = worst < 61 ? 'Double skunk!' : worst < 91 ? 'Skunk!' : '';
-      if (ov.dataset.state === `over-${v.version}`) return;
-      ov.dataset.state = `over-${v.version}`;
+      if (ov.dataset.state === 'over' || ov.dataset.state === 'over-closed') return;
+      ov.dataset.state = 'over';
       // Pegging out while hands are being counted ends the game mid-count; show that count.
       const endedInShow = v.lastHand && v.lastHand.handNo === v.handNo;
       ov.innerHTML = `<div class="modal-bg"><div class="modal panel over">
@@ -1461,19 +1501,9 @@ function mountGame(id) {
       $('#close-ov').onclick = () => {
         finalCount?.stop();
         ov.innerHTML = '';
+        ov.dataset.state = 'over-closed';
       };
-      const r = $('#rematch');
-      if (r) {
-        r.onclick = async () => {
-          try {
-            const { id: next } = await api(`/games/${id}/rematch`, { method: 'POST', gameId: id });
-            local.remember(next, local.token(id));
-            go(`/g/${next}`);
-          } catch (err) {
-            toast(err.message);
-          }
-        };
-      }
+      if ($('#rematch')) $('#rematch').onclick = rematch;
       return;
     }
     if (v.lastHand && v.lastHand.handNo > seen && v.status === 'playing') {
