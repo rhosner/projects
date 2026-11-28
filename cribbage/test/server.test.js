@@ -2,7 +2,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,10 +10,15 @@ const PORT = 3900 + Math.floor(Math.random() * 90);
 const BASE = `http://127.0.0.1:${PORT}`;
 let proc;
 
+const musicDir = mkdtempSync(join(tmpdir(), 'crib-music-'));
+const SONG = Buffer.from(Array.from({ length: 1000 }, (_, i) => i % 256));
+writeFileSync(join(musicDir, 'late-night_jazz.mp3'), SONG);
+writeFileSync(join(musicDir, 'notes.txt'), 'not music');
+
 before(async () => {
   const dir = mkdtempSync(join(tmpdir(), 'crib-'));
   proc = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'src/server.js'], {
-    env: { ...process.env, PORT: String(PORT), DB_PATH: join(dir, 't.db'), PACE: '0.005' },
+    env: { ...process.env, PORT: String(PORT), DB_PATH: join(dir, 't.db'), PACE: '0.005', MUSIC_DIR: musicDir },
     stdio: 'pipe',
   });
   for (let i = 0; i < 50; i++) {
@@ -246,4 +251,23 @@ test('Thirty-One over HTTP: draw, discard, knock; game finishes; own leaderboard
   const me = stats.players.find((p) => p.id === stats.you);
   assert.ok(me, 'has a Thirty-One record');
   assert.equal(me.botWins + me.botLosses, 1, 'a game against bots');
+});
+
+test('background music: lists audio files and streams them with byte ranges (needed by iPhone Safari)', async () => {
+  const list = await call('/api/music');
+  assert.deepEqual(list.data.tracks, [{ url: '/music/late-night_jazz.mp3', title: 'Late night jazz' }], 'only audio files, nicely named');
+  const full = await fetch(`${BASE}/music/late-night_jazz.mp3`);
+  assert.equal(full.status, 200);
+  assert.equal(full.headers.get('content-type'), 'audio/mpeg');
+  assert.equal(full.headers.get('accept-ranges'), 'bytes');
+  assert.equal(Buffer.from(await full.arrayBuffer()).length, 1000);
+  const part = await fetch(`${BASE}/music/late-night_jazz.mp3`, { headers: { Range: 'bytes=100-199' } });
+  assert.equal(part.status, 206);
+  assert.equal(part.headers.get('content-range'), 'bytes 100-199/1000');
+  assert.deepEqual(Buffer.from(await part.arrayBuffer()), SONG.subarray(100, 200));
+  const tail = await fetch(`${BASE}/music/late-night_jazz.mp3`, { headers: { Range: 'bytes=-10' } });
+  assert.equal(tail.headers.get('content-range'), 'bytes 990-999/1000');
+  const bad = await fetch(`${BASE}/music/late-night_jazz.mp3`, { headers: { Range: 'bytes=5000-' } });
+  assert.equal(bad.status, 416);
+  assert.equal((await fetch(`${BASE}/music/..%2F..%2Fpackage.json`)).status, 404, 'no escaping the music folder');
 });

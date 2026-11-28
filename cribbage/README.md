@@ -36,7 +36,7 @@ Turn-based cribbage for 2–4 friends. Every game is saved on the server, so any
 
 Scoring is automatic: fifteens, pairs, runs, flushes (crib flushes need all 5 cards), nobs, his heels, go, last card and 31. During pegging, every score is announced on the table ("Ada · 31 for 2", "Go for 1"), a 31 or a pile that earned a go stays on the table for a moment before it's cleared, and a player who can't play shows a big **GO**. Hover (or tap) a card on your turn to see the count it would make.
 
-**Sound:** card snaps, a shuffle on the deal, a knock for Go, chimes for points, and a ping when it's your turn, all synthesized in the browser (no audio files). Optional quiet background music, off by default. Both are in the 🔊 menu.
+**Sound:** card snaps, a shuffle on the deal, a knock for Go, chimes for points, and a ping when it's your turn, all synthesized in the browser. **Background music** (off by default) is chosen in the 🔊 menu: any song in `public/music/` (currently "Forsaken" by Under Earth and "Press X Twice" by Lexica) or the built-in soft chords. Drop another `.mp3` into `public/music/` and it appears in the menu, named after the file; each person's choice is remembered on their device. Songs are streamed with byte-range support, which iPhone Safari requires.
 
 After each hand the results screen counts every hand out one scoring line at a time, lighting up the cards behind each line ("Fifteen · 2, Fifteen · 4, Pair · 6"); Skip finishes it instantly. Afterwards, hover or tap any line, there or in the "Last hand" tab, to see its cards again.
 

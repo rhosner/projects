@@ -4,7 +4,7 @@ import {
 import {
   pushAvailability, ensureSubscription, currentSubscription, registerServiceWorker, isStandalone,
 } from './push-client.js';
-import { sfx, soundPrefs, setSoundPref } from './sound.js';
+import { sfx, soundPrefs, setSoundPref, setMusicTracks, musicTracks } from './sound.js';
 import {
   holdemTableHTML, bindHoldem, tickTimers, holdemLastHandHTML, holdemOverHTML, seatColor, chips as chipsHTML, ordinal,
 } from './holdem-ui.js';
@@ -136,6 +136,17 @@ async function copy(text, label = 'Copied') {
   } catch {
     prompt('Copy this link:', text);
   }
+}
+
+// Background music choices for the 🔊 menu.
+function trackOptions() {
+  const cur = soundPrefs().track;
+  return musicTracks().map((t) => `<option value="${esc(t.url)}" ${cur === t.url ? 'selected' : ''}>${esc(t.title)}</option>`).join('')
+    + `<option value="synth" ${cur === 'synth' || !musicTracks().length ? 'selected' : ''}>Built-in (soft chords)</option>`;
+}
+function refreshTrackPicker() {
+  const sel = document.getElementById('music-track');
+  if (sel) sel.innerHTML = trackOptions();
 }
 
 // ---------------------------------------------------------------------------
@@ -970,6 +981,7 @@ function mountGame(id) {
       <div class="sound-pop">
         <label class="switch"><input type="checkbox" data-pref="sfx" ${p.sfx ? 'checked' : ''}><span>Card sounds</span></label>
         <label class="switch"><input type="checkbox" data-pref="music" ${p.music ? 'checked' : ''}><span>Background music</span></label>
+        <label class="track-pick"><span>Song</span><select id="music-track">${trackOptions()}</select></label>
         <label class="switch"><input type="checkbox" data-display="fourColor" ${displayPrefs().fourColor ? 'checked' : ''}><span>Four-colour suits <small class="muted">♣ green, ♦ blue</small></span></label>
       </div></details>`;
   }
@@ -1005,6 +1017,9 @@ function mountGame(id) {
     }
     const menu = $('#sound-menu');
     menu.ontoggle = () => (G.soundOpen = menu.open);
+    const track = $('#music-track');
+    if (track) track.onchange = () => setSoundPref('track', track.value);
+    menu.addEventListener('toggle', () => menu.open && refreshTrackPicker());
     for (const box of menu.querySelectorAll('input[data-display]')) {
       box.onchange = () => setDisplayPref(box.dataset.display, box.checked);
     }
@@ -1519,4 +1534,9 @@ function mountGame(id) {
 }
 
 if (!LOCAL) registerServiceWorker();
+// Uploaded songs for background music (public/music). The demo build lists them in window.CRIB_MUSIC.
+(LOCAL ? Promise.resolve({ tracks: window.CRIB_MUSIC || [] }) : api('/music'))
+  .then((d) => setMusicTracks(d.tracks || []))
+  .catch(() => setMusicTracks([]))
+  .finally(refreshTrackPicker); // the menu may have been drawn before the list arrived
 route();
