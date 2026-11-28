@@ -1132,9 +1132,7 @@ function mountGame(id) {
       if (v.pegging.clearing) return v.pegging.count === 31 ? '<b>31!</b> Clearing the pile…' : 'Go. Clearing the pile…';
       if (v.players.every((p) => p.cardCount === 0)) return 'That’s every card. Counting the hands…';
       if (v.yourTurn) return `Your play. The count is <b>${v.pegging.count}</b>`;
-      if (v.pegging.turn === v.you) {
-        return v.legal.length === 1 ? `Your only card, ${cardText(v.legal[0])}, plays itself…` : 'You can’t play. Go!';
-      }
+      if (v.pegging.turn === v.you && !v.legal.length) return 'You can’t play. Go!';
       return `Waiting for ${esc(name(v.pegging.turn))} to play`;
     }
     return '';
@@ -1156,7 +1154,10 @@ function mountGame(id) {
       if (v.phase === 'discard') note = p.discarded ? '✓ Ready' : 'Choosing…';
       else if (v.phase === 'pegging') note = p.isTurn ? 'Thinking…' : '';
     }
-    const backs = Array.from({ length: p.cardCount }, () => backHTML('xs')).join('');
+    const revealed = v.finalHands?.hands.find((h) => !h.crib && h.seat === p.seat);
+    const backs = revealed
+      ? sortCards(revealed.cards).map((c) => cardHTML(c, { cls: 'xs-face' })).join('')
+      : Array.from({ length: p.cardCount }, () => backHTML('xs')).join('');
     return `<div class="seat ${p.isTurn ? 'turn' : ''}" data-seat="${p.seat}" style="--c:${color}">
       <div class="seat-head"><span class="avatar" style="--c:${color}">${esc(p.name[0].toUpperCase())}</span>
         <div class="seat-name"><b>${esc(p.name)}${p.bot ? ' <span class="bot-tag">BOT</span>' : ''}</b>${team}</div>
@@ -1225,6 +1226,10 @@ function mountGame(id) {
 
   function meHTML(v) {
     const me = v.players[v.you];
+    if (v.finalHands) {
+      const mine = v.finalHands.hands.find((h) => !h.crib && h.seat === v.you);
+      if (mine) v = { ...v, hand: mine.cards };
+    }
     const canDiscard = v.phase === 'discard' && v.yourTurn;
     const canPlay = v.phase === 'pegging' && v.yourTurn;
     const hand = sortCards(v.hand);
@@ -1361,6 +1366,27 @@ function mountGame(id) {
   }
 
   // --- overlays --------------------------------------------------------------
+  /** Everyone's cards at the end of a cribbage game, including hands the game ended before counting. */
+  function finalHandsHTML(v, endedInShow) {
+    const fh = v.finalHands;
+    if (!fh) return '';
+    const hands = fh.hands.filter((h) => !(endedInShow && h.counted)); // counted ones are in the walk-through above
+    if (!hands.length) return '';
+    const who = (h) => {
+      const p = v.players[h.seat];
+      if (h.crib) return `${h.seat === v.you ? 'Your' : `${esc(p.name)}’s`} crib`;
+      return h.seat === v.you ? 'Your hand' : esc(p.name);
+    };
+    return `<h3 class="final-count">${endedInShow ? 'Not counted: the game ended first' : 'Everyone’s hands'}</h3>
+      <div class="last final-hands">
+        <div class="last-head"><span>Starter</span>${cardHTML(fh.starter, { cls: 'xs-face' })}</div>
+        ${hands.map((h) => `<div class="show" style="--c:${SIDE_COLORS[v.players[h.seat].side]}">
+          <div class="show-head"><b>${who(h)}</b><span class="would">would have counted <b>${h.points}</b></span></div>
+          <div class="show-cards">${sortCards(h.cards).map((c) => cardHTML(c, { cls: 'xs-face' })).join('')}<span class="plus">+</span>${cardHTML(fh.starter, { cls: 'xs-face dim' })}</div>
+        </div>`).join('')}
+      </div>`;
+  }
+
   function renderHoldemOverlay(v, ov) {
     if (v.status !== 'finished') {
       if (ov.dataset.state?.startsWith('over-')) ov.innerHTML = '';
@@ -1412,6 +1438,7 @@ function mountGame(id) {
         ${skunk ? `<p class="skunk">${skunk}</p>` : ''}
         <div class="final">${v.scores.map((s, i) => `<div style="--c:${SIDE_COLORS[i]}"><span>${esc(sideLabel(v, i))}</span><b>${s}</b></div>`).join('')}</div>
         ${endedInShow ? `<h3 class="final-count">How the last hand was counted</h3>${lastHandHTML(v, true)}` : ''}
+        ${finalHandsHTML(v, endedInShow)}
         <div class="modal-actions">
           ${v.you !== null ? `<button class="btn primary big" id="rematch">${v.nextGameId ? 'Go to rematch' : 'Rematch'}</button>` : ''}
           <button class="btn ghost" id="close-ov">View table</button></div></div></div>`;

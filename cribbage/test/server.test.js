@@ -105,7 +105,7 @@ test('4-player game over HTTP, with auth checks and rematch', async () => {
     const mover = views.find((x) => x.data.yourTurn);
     // Between decisions the server pauses for automatic steps (forced plays, Go,
     // counting, dealing). Only act when the game is genuinely waiting on a player.
-    const waiting = mover && (mover.data.phase === 'discard' || mover.data.legal.length > 1);
+    const waiting = mover && (mover.data.phase === 'discard' || mover.data.legal.length >= 1);
     if (!waiting || views.some((x) => x.data.version !== v.version)) {
       await new Promise((r) => setTimeout(r, 5));
       continue;
@@ -152,7 +152,7 @@ test('leaderboard: a finished game is credited to the player who played it', asy
     v = (await call(`/api/games/${id}`, { token, key })).data; // opening the game claims the seat
     if (v.status === 'finished') break;
     if (v.yourTurn && v.phase === 'discard') await call(`/api/games/${id}/discard`, { method: 'POST', body: { cards: v.hand.slice(0, 2) }, token });
-    else if (v.yourTurn && v.legal.length > 1) await call(`/api/games/${id}/play`, { method: 'POST', body: { card: v.legal[0] }, token });
+    else if (v.yourTurn && v.legal.length >= 1) await call(`/api/games/${id}/play`, { method: 'POST', body: { card: v.legal[0] }, token });
     else await new Promise((r) => setTimeout(r, 3));
   }
   assert.equal(v.status, 'finished');
