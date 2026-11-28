@@ -56,9 +56,13 @@ function isRun(cards) {
   return true;
 }
 
-/** Score a 4-card hand (or crib) with the starter. Returns { total, items }. */
+/**
+ * Score a 4-card hand (or crib) with the starter. Returns { total, items }.
+ * With no starter (before the cut), scores just the four cards: the points the
+ * hand is guaranteed whatever is cut.
+ */
 export function scoreHand(hand, starter, isCrib = false) {
-  const all = [...hand, starter];
+  const all = starter ? [...hand, starter] : [...hand];
   const subs = subsets(all);
   const items = [];
 
@@ -78,10 +82,10 @@ export function scoreHand(hand, starter, isCrib = false) {
   }
   const suit = suitOf(hand[0]);
   if (hand.every((c) => suitOf(c) === suit)) {
-    if (suitOf(starter) === suit) items.push({ kind: 'flush', cards: all, points: 5 });
+    if (starter && suitOf(starter) === suit) items.push({ kind: 'flush', cards: all, points: 5 });
     else if (!isCrib) items.push({ kind: 'flush', cards: [...hand], points: 4 });
   }
-  const nob = hand.find((c) => c[0] === 'J' && suitOf(c) === suitOf(starter));
+  const nob = starter && hand.find((c) => c[0] === 'J' && suitOf(c) === suitOf(starter));
   if (nob) items.push({ kind: 'nobs', cards: [nob], points: 1 });
 
   return { total: items.reduce((t, i) => t + i.points, 0), items };
@@ -523,6 +527,33 @@ function finalHands(state) {
   return { starter: state.starter, hands: out };
 }
 
+function combos(arr, k, start = 0, acc = [], out = []) {
+  if (acc.length === k) out.push([...acc]);
+  else for (let i = start; i < arr.length; i++) combos(arr, k, i + 1, [...acc, arr[i]], out);
+  return out;
+}
+
+/**
+ * Your own hand's points (never anyone else's). While choosing crib cards: the
+ * points of the four you'd keep for every possible throw, keyed by the thrown
+ * cards (sorted, comma-joined), so the screen can show it as you select. After
+ * that: the kept hand's points before the cut, and with the starter once cut.
+ */
+export function yourPoints(state, seat) {
+  if (seat == null || state.status === 'lobby') return null;
+  if (state.phase === 'discard' && !state.discarded[seat]) {
+    const hand = state.hands[seat];
+    const keep = {};
+    for (const thrown of combos(hand, discardCount(state.numPlayers))) {
+      keep[[...thrown].sort().join(',')] = scoreHand(hand.filter((c) => !thrown.includes(c)), null).total;
+    }
+    return { keep };
+  }
+  const kept = state.kept[seat];
+  if (!kept) return null;
+  return { hand: scoreHand(kept, null).total, withStarter: state.starter ? scoreHand(kept, state.starter).total : null };
+}
+
 export function viewFor(state, seat) {
   const me = seat ?? null;
   const p = state.pegging;
@@ -564,6 +595,7 @@ export function viewFor(state, seat) {
       : null,
     lastHand: state.lastHand,
     finalHands: finalHands(state),
+    yourPoints: yourPoints(state, me),
     log: state.log.slice(-80),
   };
 }

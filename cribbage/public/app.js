@@ -1278,9 +1278,23 @@ function mountGame(id) {
     }
     const keptNote = v.phase === 'pegging' && v.kept ? `<div class="kept">Your hand for the show: ${miniCards(sortCards(v.kept))}</div>` : '';
 
+    // Your hand's points: as you pick crib cards, then before and after the cut.
+    let pts = '';
+    const yp = v.yourPoints;
+    if (yp?.keep && canDiscard) {
+      const k = v.discardCount;
+      pts = G.selected.length === k
+        ? `<span class="pts-pill">Keeping these: <b>${yp.keep[[...G.selected].sort().join(',')]}</b> pts before the cut</span>`
+        : `<span class="pts-pill quiet">Pick ${k === 1 ? 'a card' : `${k} cards`} to throw to see your points</span>`;
+    } else if (yp && !yp.keep) {
+      pts = yp.withStarter != null
+        ? `<span class="pts-pill">Your hand: <b>${yp.withStarter}</b> pts</span>`
+        : `<span class="pts-pill">Your hand: <b>${yp.hand}</b> pts + the cut</span>`;
+    }
+
     return `<div class="me ${v.yourTurn ? 'turn' : ''}" style="--c:${SIDE_COLORS[me.side]}">
       <div class="me-head"><span class="avatar" style="--c:${SIDE_COLORS[me.side]}">${esc(me.name[0].toUpperCase())}</span><b>${esc(me.name)}</b>
-        ${v.dealer === v.you ? '<span class="dealer">D</span>' : ''}${me.saidGo && v.phase === 'pegging' ? goBadge(me) : ''}</div>
+        ${pts}${v.dealer === v.you ? '<span class="dealer">D</span>' : ''}${me.saidGo && v.phase === 'pegging' ? goBadge(me) : ''}</div>
       <div class="hand ${G.dealtKey !== `${v.handNo}` ? 'deal' : ''}">${cards || '<span class="muted">No cards in hand</span>'}</div>
       <div class="actions">${action}</div>
       ${keptNote}

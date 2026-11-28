@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bestHand, score5, compareScores } from '../src/poker-hands.js';
 import {
-  createHoldem, addHoldemPlayer, startHoldem, holdemAct, holdemAutoStep, options, buildPots, holdemView,
+  createHoldem, addHoldemPlayer, startHoldem, holdemAct, holdemAutoStep, options, buildPots, holdemView, yourHandName,
 } from '../src/holdem.js';
 import { holdemBotDecision, holdemNextAutomatic, chenScore } from '../src/holdem-bot.js';
 
@@ -204,4 +204,17 @@ test('host can start before every seat fills', () => {
   startHoldem(g, rng);
   assert.equal(g.numPlayers, 3);
   assert.equal(g.status, 'playing');
+});
+
+test('your hand name: before the flop and after', () => {
+  assert.equal(yourHandName(['KH', 'KS'], []), 'Pocket Kings');
+  assert.equal(yourHandName(['6H', '6S'], []), 'Pocket Sixes');
+  assert.equal(yourHandName(['KS', 'AS'], []), 'Ace-King suited');
+  assert.equal(yourHandName(['9D', 'TC'], []), 'Ten-Nine');
+  assert.equal(yourHandName(['KH', '4C'], ['KD', '7S', '2H']), 'Pair of Kings');
+  assert.equal(yourHandName(['AH', '9H'], ['2H', '7H', 'KH', '3C']), 'Flush, Ace high');
+  const { g } = table(3, 2);
+  const v = holdemView(g, 0);
+  assert.ok(v.yourHandName, 'shown to you');
+  assert.ok(!holdemView(g, null).yourHandName, 'spectators get nothing');
 });

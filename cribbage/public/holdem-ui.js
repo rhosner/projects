@@ -114,6 +114,7 @@ function meHTML(v, G) {
   }
   return `<div class="me pk-me ${v.yourTurn ? 'turn' : ''}" style="--c:${c}">
     <div class="me-head"><span class="avatar" style="--c:${c}">${esc(me.name[0].toUpperCase())}</span><b>${esc(me.name)}</b>${chips(me.stack)}
+      ${v.yourHandName ? `<span class="pts-pill">${esc(v.yourHandName)}</span>` : ''}
       <div class="pk-tags">${v.button === v.you ? '<span class="dealer">D</span>' : ''}${me.sb ? '<span class="blind-tag">SB</span>' : ''}${me.bb ? '<span class="blind-tag">BB</span>' : ''}
       ${me.bet ? `<span class="pk-bet inline">${chipHTML(me.bet)}${money(me.bet)}</span>` : ''}${me.allIn ? '<span class="pk-status hot">All in</span>' : ''}${me.folded ? '<span class="pk-status">Folded</span>' : ''}</div></div>
     <div class="hand pk-hand">${hole}</div>

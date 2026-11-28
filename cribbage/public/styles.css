@@ -590,6 +590,14 @@ h2 { font-size: 20px; margin: 0 0 14px; }
 :root.four-color .suit-chip.suit-D { color: #1c5fd4; }
 .hand-card.just-drawn { box-shadow: 0 0 0 2px var(--gold), 0 12px 22px -10px rgba(245,176,65,.6); }
 
+.pts-pill {
+  display: inline-flex; align-items: baseline; gap: 4px; padding: 4px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
+  background: rgba(62,224,161,.1); border: 1px solid rgba(62,224,161,.35); color: var(--text); white-space: nowrap;
+}
+.pts-pill b { font-family: var(--serif); font-size: 16px; color: var(--accent); }
+.pts-pill.quiet { background: transparent; border-color: var(--line); color: var(--muted); font-weight: 500; }
+.me-head .pts-pill { margin-left: 4px; }
+
 /* ---------- game over bar ---------- */
 .over-bar {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px; border-radius: 16px;

@@ -13,6 +13,8 @@ Card games for friends: **cribbage** and **Thirty-One** you can play on your own
 - **Cases the rules leave open, as implemented:** ties for lowest all lose (a tied knocker loses 2); each token lost counts as a loss (a knocker with 1 token losing 2 goes straight out); you can't throw back the card you just took from the discard pile; an empty deck is rebuilt from the discard pile; the deal passes left each round; if everyone left would go out in the same round, nobody does and play continues.
 - **Bot** takes the discard when it clearly helps, keeps its best three, and knocks at 27+ (25+ once a round drags on).
 
+**Your hand's value** shows next to your name in every game (only your own): cribbage points as you pick crib cards ("Keeping these: 8 pts before the cut") and then with the starter; Hold'em's current hand ("Pocket Kings", "Two pair, Jacks and Fours"); Thirty-One's hand value, and "Best keep" while holding four cards.
+
 ## Texas Hold'em
 
 No-limit tournament for 2–9 players. Everyone starts with the same stack; blinds double every few hands; the last player with chips wins.

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   scoreHand,
   scorePegging,
+  yourPoints,
   createGame,
   addPlayer,
   discard,
@@ -249,4 +250,28 @@ test('when the game ends, everyone’s hands and the crib are revealed', () => {
     const endedInShow = g.lastHand?.handNo === g.handNo;
     if (!endedInShow) assert.ok(fh.hands.every((h) => !h.counted), 'pegged out: none were counted');
   }
+});
+
+test('your hand points: before the cut, with the starter, and while choosing crib cards', () => {
+  // Before the cut: only the four cards count (no flush bonus from a starter, no nobs).
+  assert.equal(scoreHand(['5H', '5C', 'JD', 'TS'], null).total, 10, 'pair (2) + four fifteens: each 5 with the J and with the 10 (8)');
+  assert.equal(scoreHand(['2H', '4H', '6H', '8H'], null).total, 4, 'four-card flush still counts');
+  assert.equal(scoreHand(['JH', '2C', '4S', '6D'], null).total, 0, 'no nobs without a starter');
+
+  const g = createGame({ id: 'g', numPlayers: 2 });
+  const rng = seeded(8);
+  addPlayer(g, { id: 'a', name: 'A', tokenHash: 'x' }, rng);
+  addPlayer(g, { id: 'b', name: 'B', tokenHash: 'y' }, rng);
+  g.hands[0] = ['5H', '5C', 'JD', 'TS', '2C', '9D'];
+  const opts = yourPoints(g, 0).keep;
+  assert.equal(Object.keys(opts).length, 15, 'every way to throw 2 of 6');
+  assert.equal(opts[['2C', '9D'].sort().join(',')], 10, 'keeping 5-5-J-10 is worth 10 before the cut');
+  const theirs = Object.keys(viewFor(g, 1).yourPoints.keep).flatMap((k) => k.split(','));
+  assert.ok(theirs.every((c) => g.hands[1].includes(c)), 'each player only gets numbers about their own cards');
+
+  discard(g, 0, ['2C', '9D'], rng);
+  assert.deepEqual(yourPoints(g, 0), { hand: 10, withStarter: null }, 'after throwing, before the cut');
+  discard(g, 1, g.hands[1].slice(0, 2), rng);
+  const after = yourPoints(g, 0);
+  assert.equal(after.withStarter, scoreHand(['5H', '5C', 'JD', 'TS'], g.starter).total, 'with the starter once cut');
 });

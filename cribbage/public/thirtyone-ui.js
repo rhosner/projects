@@ -13,6 +13,17 @@ export function handValue(cards) {
 }
 const valueBadge = (hv) => (hv?.suit ? `<span class="t1-value">${hv.value}<span class="suit-chip suit-${hv.suit}">${suitSVG(hv.suit)}</span></span>` : '');
 
+/** Holding four cards after a draw: the most you can keep by discarding one. */
+function bestKeepBadge(hand, forbidden) {
+  let best = null;
+  for (const c of hand) {
+    if (c === forbidden) continue;
+    const hv = handValue(hand.filter((x) => x !== c));
+    if (!best || hv.value > best.value) best = hv;
+  }
+  return best ? `<span class="pts-pill">Best keep: <b>${best.value}</b></span>` : '';
+}
+
 function tokensHTML(p, total) {
   if (p.out) return `<span class="t1-tokens out">Out · ${ordinal(p.place)}</span>`;
   if (p.onHonor) return '<span class="t1-tokens honor">On their honor</span>';
@@ -110,7 +121,7 @@ function meHTML(v, G) {
   }
   return `<div class="me t1-me ${v.yourTurn ? 'turn' : ''}" style="--c:${c}">
     <div class="me-head"><span class="avatar" style="--c:${c}">${esc(me.name[0].toUpperCase())}</span><b>${esc(me.name)}</b>${tokensHTML(me, v.settings.tokens)}
-      <div class="pk-tags">${v.dealer === v.you ? '<span class="dealer">D</span>' : ''}${me.knocked ? '<span class="knock-badge">KNOCKED</span>' : ''}${valueBadge(v.handValue && v.hand.length === 3 ? v.handValue : drawn ? null : v.handValue)}</div></div>
+      <div class="pk-tags">${v.dealer === v.you ? '<span class="dealer">D</span>' : ''}${me.knocked ? '<span class="knock-badge">KNOCKED</span>' : ''}${drawn ? bestKeepBadge(hand, forbidden) : valueBadge(v.handValue)}</div></div>
     <div class="hand">${cards || `<span class="muted">${me.out ? `You finished ${ordinal(me.place)}` : 'Waiting for the deal'}</span>`}</div>
     ${actions}
   </div>`;
