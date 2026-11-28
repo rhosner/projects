@@ -1,5 +1,6 @@
 import http from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, stat, readdir } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { join, extname, normalize, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +13,7 @@ import { gameFor, gameModule, rematchSettings, typeOf, GAMES } from './games.js'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PUBLIC = join(ROOT, 'public');
+const MUSIC = process.env.MUSIC_DIR || join(PUBLIC, 'music'); // background music files
 const PORT = Number(process.env.PORT || 3000);
 const store = openStore(process.env.DB_PATH || join(ROOT, 'data', 'cribbage.db'));
 // Push services (Apple in particular) require a real contact in the VAPID subject.
@@ -304,6 +306,15 @@ const routes = [
     send(res, 200, { you: playerIdFor(req), game: type, players: computeStats(games) });
   }],
 
+  // Background music: every audio file in public/music, so adding a track needs no code change.
+  ['GET', /^\/api\/music$/, async (_req, res) => {
+    let files = [];
+    try {
+      files = (await readdir(MUSIC)).filter((f) => AUDIO.has(extname(f).toLowerCase())).sort();
+    } catch { /* no music folder yet */ }
+    send(res, 200, { tracks: files.map((f) => ({ url: `/music/${encodeURIComponent(f)}`, title: trackTitle(f) })) });
+  }],
+
   ['GET', /^\/api\/push\/key$/, async (_req, res) => send(res, 200, { publicKey: pusher.publicKey })],
 
   ['POST', /^\/api\/games\/([a-z0-9]+)\/push$/, async (req, res, [id]) => {
@@ -338,24 +349,61 @@ const TYPES = {
   '.png': 'image/png',
   '.json': 'application/json',
   '.webmanifest': 'application/manifest+json',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.ogg': 'audio/ogg',
+};
+const AUDIO = new Set(['.mp3', '.m4a', '.ogg']);
+
+/** "late-night_jazz.mp3" -> "Late night jazz" */
+export const trackTitle = (file) => {
+  const t = file.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return t.charAt(0).toUpperCase() + t.slice(1);
 };
 
 async function serveStatic(req, res) {
   const url = new URL(req.url, 'http://x');
   let path = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
   if (path === '/' || path === '/leaders' || path.startsWith('/g/')) path = '/index.html'; // app routes
-  const file = join(PUBLIC, path);
-  if (!file.startsWith(PUBLIC)) throw new HttpError(404, 'Not found');
+  const music = path.startsWith('/music/');
+  const base = music ? MUSIC : PUBLIC;
+  const file = music ? join(MUSIC, path.slice('/music/'.length)) : join(PUBLIC, path);
+  if (!file.startsWith(base)) throw new HttpError(404, 'Not found');
   try {
     if (!(await stat(file)).isFile()) throw new Error();
   } catch {
     throw new HttpError(404, 'Not found');
   }
+  const type = TYPES[extname(file)] || 'application/octet-stream';
+  if (AUDIO.has(extname(file))) return serveRanged(req, res, file, type);
   res.writeHead(200, {
-    'Content-Type': TYPES[extname(file)] || 'application/octet-stream',
+    'Content-Type': type,
     'Cache-Control': ['/index.html', '/sw.js', '/manifest.webmanifest'].includes(path) ? 'no-cache' : 'public, max-age=300',
   });
   res.end(await readFile(file));
+}
+
+// Audio is streamed with HTTP range support: Safari (iPhone) won't play
+// <audio> from a server that can't send byte ranges.
+async function serveRanged(req, res, file, type) {
+  const { size } = await stat(file);
+  const headers = { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Cache-Control': 'public, max-age=86400' };
+  const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+  if (!m || (m[1] === '' && m[2] === '')) {
+    res.writeHead(200, { ...headers, 'Content-Length': size });
+    if (req.method === 'HEAD') return res.end();
+    return createReadStream(file).pipe(res);
+  }
+  let start = m[1] === '' ? size - Number(m[2]) : Number(m[1]);
+  let end = m[1] === '' || m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1);
+  if (start < 0) start = 0;
+  if (start > end || start >= size) {
+    res.writeHead(416, { ...headers, 'Content-Range': `bytes */${size}` });
+    return res.end();
+  }
+  res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': end - start + 1 });
+  if (req.method === 'HEAD') return res.end();
+  createReadStream(file, { start, end }).pipe(res);
 }
 
 const server = http.createServer(async (req, res) => {

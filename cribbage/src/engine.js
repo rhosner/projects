@@ -149,7 +149,7 @@ export function sideName(state, side) {
   return names.join(' & ');
 }
 
-export function createGame({ id, numPlayers, autoPlay = true, teams = true }) {
+export function createGame({ id, numPlayers, teams = true }) {
   if (![2, 3, 4].includes(numPlayers)) throw new RuleError('Games are for 2, 3 or 4 players');
   teams = numPlayers === 4 && teams !== false;
   return {
@@ -159,7 +159,6 @@ export function createGame({ id, numPlayers, autoPlay = true, teams = true }) {
     updatedAt: Date.now(),
     numPlayers,
     teams,
-    autoPlay,
     status: 'lobby',
     phase: 'lobby',
     players: [],
@@ -346,7 +345,6 @@ function resetCount(p) {
 
 /** Base pause before each kind of step, in ms. Callers scale and jitter these. */
 export const STEP_DELAY = {
-  forced: 900,
   go: 800,
   'go-point': 1200,
   reset: 1900, // how long a 31, or the pile that just earned a go, stays on the table
@@ -427,12 +425,9 @@ export function autoStep(state, rng = randomInt) {
       p.turn = nextSeat(state, t);
       return 'go';
     }
-    const legal = legalPlays(state, t);
-    if (state.autoPlay && legal.length === 1) {
-      doPlay(state, t, legal[0], true);
-      return 'forced';
-    }
-    return null; // waiting on a real decision
+    // Cards are never played automatically, even when only one is legal: how
+    // quickly a card appears would tell the table what the player is holding.
+    return null; // waiting on the player
   }
   return null;
 }
@@ -496,9 +491,36 @@ export function isTurn(state, seat) {
     // "Your turn" means the game is waiting on your decision. A forced card or a
     // "Go" is played for you after a pause, so it doesn't count.
     if (state.pegging.needsReset || effectiveTurn(state) !== seat) return false;
-    return legalPlays(state, seat).length > (state.autoPlay ? 1 : 0);
+    return legalPlays(state, seat).length > 0;
   }
   return false;
+}
+
+/**
+ * When the game is over, everyone's cards can be shown: each hand kept for the
+ * show and the crib, with what it would have counted, and whether it actually
+ * was counted before someone reached 121.
+ */
+function finalHands(state) {
+  if (state.status !== 'finished' || !state.starter) return null;
+  const counted = state.lastHand?.handNo === state.handNo ? state.lastHand.shows : [];
+  const out = [];
+  state.players.forEach((_, i) => {
+    if (!state.kept[i]) return;
+    out.push({
+      seat: i, crib: false, cards: state.kept[i],
+      points: scoreHand(state.kept[i], state.starter).total,
+      counted: counted.some((sh) => !sh.crib && sh.seat === i),
+    });
+  });
+  if (state.crib.length === 4) {
+    out.push({
+      seat: state.dealer, crib: true, cards: [...state.crib],
+      points: scoreHand(state.crib, state.starter, true).total,
+      counted: counted.some((sh) => sh.crib),
+    });
+  }
+  return { starter: state.starter, hands: out };
 }
 
 export function viewFor(state, seat) {
@@ -541,6 +563,7 @@ export function viewFor(state, seat) {
       ? { count: p.count, pile: p.pile, history: p.history, turn: effectiveTurn(state), clearing: !!p.needsReset, lastPlayer: p.lastPlayer }
       : null,
     lastHand: state.lastHand,
+    finalHands: finalHands(state),
     log: state.log.slice(-80),
   };
 }

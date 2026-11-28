@@ -5,7 +5,7 @@ import { createECDH, randomBytes, createPublicKey, verify } from 'node:crypto';
 import { createRequire } from 'node:module';
 import webpush from 'web-push';
 import { createPusher, turnNotifications } from '../src/push.js';
-import { createGame, addPlayer, discard, play, legalPlays, autoStep } from '../src/engine.js';
+import { createGame, addPlayer, discard, play, legalPlays, autoStep, effectiveTurn } from '../src/engine.js';
 
 const require = createRequire(import.meta.url);
 const ece = require('http_ece'); // the decryption a browser does, from an independent implementation
@@ -145,7 +145,7 @@ test('turnNotifications: who gets pinged, and when', () => {
   const check = (b, actor) => {
     for (const n of turnNotifications(b, g, actor)) {
       assert.notEqual(n.seat, actor, 'actor is never notified');
-      if (g.status === 'playing') assert.ok(g.phase === 'discard' ? !g.discarded[n.seat] : g.pegging.turn === n.seat);
+      if (g.status === 'playing') assert.ok(g.phase === 'discard' ? !g.discarded[n.seat] : effectiveTurn(g) === n.seat);
     }
     if (g.status === 'finished' && b.status !== 'finished') {
       const last = turnNotifications(b, g, actor);
@@ -169,7 +169,12 @@ test('turnNotifications: who gets pinged, and when', () => {
     }
     const seat = g.phase === 'discard' ? g.discarded.indexOf(false) : g.pegging.turn;
     if (g.phase === 'discard') discard(g, seat, g.hands[seat].slice(0, 2), rng);
-    else play(g, seat, legalPlays(g, seat)[0], rng);
+    else {
+      const who = effectiveTurn(g);
+      play(g, who, legalPlays(g, who)[0], rng);
+      check(before, who);
+      continue;
+    }
     check(before, seat);
   }
   assert.ok(dealt >= 2);

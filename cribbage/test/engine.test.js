@@ -78,7 +78,7 @@ function simulate(numPlayers, seed, teams = true) {
     } else if (g.phase === 'pegging') {
       const t = g.pegging.turn;
       const legal = legalPlays(g, t);
-      assert.ok(legal.length > 1 || !g.autoPlay, 'engine only waits on a real choice');
+      assert.ok(legal.length >= 1, 'the engine waits whenever the player has a card to play');
       play(g, t, legal[rng(legal.length)], rng);
       settle(g, rng);
     }
@@ -152,7 +152,7 @@ test('automatic steps happen one at a time and end in a counted, then dealt, han
     assert.equal(g.phase, 'discard');
     assert.equal(g.lastHand.handNo, 1);
   }
-  assert.ok(kinds.every((k) => ['forced', 'go', 'go-point', 'reset', 'last-card', 'end-pegging', 'deal'].includes(k)), kinds.join());
+  assert.ok(kinds.every((k) => ['go', 'go-point', 'reset', 'last-card', 'end-pegging', 'deal'].includes(k)), kinds.join());
 });
 
 test('4-player free-for-all: four separate scores, everyone plays alone', () => {
@@ -202,4 +202,51 @@ test('a 31 stays on the table until a separate reset step clears it', () => {
     }
   }
   assert.fail('no 31 found in 400 seeded games');
+});
+
+test('no card is ever played automatically, even when only one is legal', () => {
+  for (let seed = 1; seed <= 30; seed++) {
+    const rng = seeded(seed * 17);
+    const g = createGame({ id: 'g', numPlayers: 2 });
+    addPlayer(g, { id: 'a', name: 'A', tokenHash: 'x' }, rng);
+    addPlayer(g, { id: 'b', name: 'B', tokenHash: 'y' }, rng);
+    discard(g, 0, g.hands[0].slice(0, 2), rng);
+    discard(g, 1, g.hands[1].slice(0, 2), rng);
+    let guard = 0;
+    while (g.status === 'playing' && g.phase === 'pegging' && guard++ < 100) {
+      const before = g.pegging.history.length;
+      if (autoStep(g, rng)) {
+        assert.equal(g.pegging?.history.length ?? before, before, 'an automatic step never plays a card');
+        continue;
+      }
+      const t = g.pegging.turn;
+      assert.ok(viewFor(g, t).yourTurn, 'the player is asked even with a single legal card');
+      play(g, t, legalPlays(g, t)[0], rng);
+    }
+    assert.ok(!g.log.some((e) => e.text.includes('· auto')));
+  }
+});
+
+test('when the game ends, everyone’s hands and the crib are revealed', () => {
+  for (let seed = 1; seed <= 40; seed++) {
+    const rng = seeded(seed * 31);
+    const g = createGame({ id: 'g', numPlayers: 3 });
+    for (let i = 0; i < 3; i++) addPlayer(g, { id: `p${i}`, name: `P${i}`, tokenHash: `t${i}` }, rng);
+    while (g.status === 'playing') {
+      settle(g, rng);
+      if (g.status !== 'playing') break;
+      if (g.phase === 'discard') {
+        const s = g.discarded.indexOf(false);
+        discard(g, s, g.hands[s].slice(0, 1), rng);
+      } else play(g, g.pegging.turn, legalPlays(g, g.pegging.turn)[0], rng);
+      if (g.status === 'playing') assert.equal(viewFor(g, 0).finalHands, null, 'nothing revealed mid-game');
+    }
+    const fh = viewFor(g, 0).finalHands;
+    assert.ok(fh, 'revealed at the end');
+    assert.equal(fh.hands.filter((h) => !h.crib).length, 3, 'all three hands');
+    assert.equal(fh.hands.filter((h) => h.crib).length, 1, 'and the crib');
+    for (const h of fh.hands) assert.equal(h.cards.length, 4);
+    const endedInShow = g.lastHand?.handNo === g.handNo;
+    if (!endedInShow) assert.ok(fh.hands.every((h) => !h.counted), 'pegged out: none were counted');
+  }
 });

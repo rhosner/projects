@@ -2,7 +2,7 @@
 // Host the folder anywhere static, e.g. GitHub Pages. Its index.html is a page
 // fragment (no <html>/<head>) so it can also be published as a claude.ai Artifact;
 // browsers render it fine either way.
-import { mkdirSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, copyFileSync, readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -30,6 +30,14 @@ const copies = {
 };
 for (const [to, from] of Object.entries(copies)) copyFileSync(join(root, from), join(out, to));
 
+// Background music: copy public/music/* and list the tracks for the page.
+const musicDir = join(root, 'public/music');
+const songs = existsSync(musicDir) ? readdirSync(musicDir).filter((f) => /\.(mp3|m4a|ogg)$/i.test(f)).sort() : [];
+if (songs.length) mkdirSync(join(out, 'music'), { recursive: true });
+for (const f of songs) copyFileSync(join(musicDir, f), join(out, 'music', f));
+const title = (f) => { const t = f.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim(); return t.charAt(0).toUpperCase() + t.slice(1); };
+const music = songs.map((f) => ({ url: `music/${encodeURIComponent(f)}`, title: title(f) }));
+
 const css = readFileSync(join(root, 'public/styles.css'), 'utf8');
 writeFileSync(join(out, 'index.html'), `<title>Card Night</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -45,7 +53,8 @@ ${css}
 <script type="module">
   import { transport } from './local-backend.js';
   window.CRIB_TRANSPORT = transport;
+  window.CRIB_MUSIC = ${JSON.stringify(music)};
   await import('./app.js');
 </script>
 `);
-console.log(`Demo built in ${out}`);
+console.log(`Demo built in ${out}${songs.length ? ` with ${songs.length} song(s)` : ''}`);

@@ -36,7 +36,7 @@ Turn-based cribbage for 2–4 friends. Every game is saved on the server, so any
 
 Scoring is automatic: fifteens, pairs, runs, flushes (crib flushes need all 5 cards), nobs, his heels, go, last card and 31. During pegging, every score is announced on the table ("Ada · 31 for 2", "Go for 1"), a 31 or a pile that earned a go stays on the table for a moment before it's cleared, and a player who can't play shows a big **GO**. Hover (or tap) a card on your turn to see the count it would make.
 
-**Sound:** card snaps, a shuffle on the deal, a knock for Go, chimes for points, and a ping when it's your turn, all synthesized in the browser (no audio files). Optional quiet background music, off by default. Both are in the 🔊 menu.
+**Sound:** card snaps, a shuffle on the deal, a knock for Go, chimes for points, and a ping when it's your turn, all synthesized in the browser. **Background music** (off by default) is chosen in the 🔊 menu: any song in `public/music/` (currently "Forsaken" by Under Earth and "Press X Twice" by Lexica) or the built-in soft chords. Drop another `.mp3` into `public/music/` and it appears in the menu, named after the file; each person's choice is remembered on their device. Songs are streamed with byte-range support, which iPhone Safari requires.
 
 After each hand the results screen counts every hand out one scoring line at a time, lighting up the cards behind each line ("Fifteen · 2, Fifteen · 4, Pair · 6"); Skip finishes it instantly. Afterwards, hover or tap any line, there or in the "Last hand" tab, to see its cards again.
 
@@ -59,7 +59,7 @@ Short a player? Tap **Play bots right now** on the home page, or **Fill empty se
 1. Create a game and copy the invite link into your group chat.
 2. Friends open the link and enter a name. No accounts. The game starts once every seat is taken.
 3. Each browser remembers its seat. To use the same seat on your phone, use **Other device** to copy a personal link (it signs in as you, so don't share it).
-4. To keep async games moving, the app makes forced moves automatically: a "Go" when you can't play, and your card when only one is legal. You only get asked when there's a real choice. Each automatic step (forced plays, Go, the go and last-card points, counting the hands, the next deal) happens on its own beat with a short pause, so you can follow what happened. Set `PACE` to scale every pause (`PACE=0.5` is twice as fast).
+4. "Go" is said for you when you can't play, but **cards are never played automatically**, even when only one is legal: how fast a card appeared would tell the table what you're holding. Bots take a varied amount of time on every play for the same reason. Each automatic step (Go, the go and last-card points, counting the hands, the next deal) happens on its own beat with a short pause, so you can follow what happened. When a game ends, everyone's hands and the crib are revealed, with what any uncounted hand would have scored. Set `PACE` to scale every pause (`PACE=0.5` is twice as fast).
 5. If more than one person has the game open, they see each other's moves instantly (Server-Sent Events).
 6. **Push notifications.** Tap **Turn on** (or the 🔔) in a game and you'll get a notification when it's your turn, when a new hand is dealt, and when the game ends, even with the app closed. You never get one for your own moves. Turning it on for one game means the device is subscribed to your other games too; you can turn it off per game.
 

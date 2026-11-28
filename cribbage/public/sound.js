@@ -50,6 +50,58 @@ export function setSoundPref(key, on) {
     localStorage.setItem(KEY, JSON.stringify(prefs));
   } catch { /* fine */ }
   if (key === 'music') (on ? (unlockAudio(), startMusic()) : stopMusic());
+  if (key === 'track' && prefs.music) {
+    stopMusic();
+    startMusic();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Music choices: "synth" (built-in chords) or an audio file from /music.
+// ---------------------------------------------------------------------------
+let tracks = [];
+export const musicTracks = () => tracks;
+/** Called once the list of uploaded tracks is known. Uploaded tracks become the default. */
+export function setMusicTracks(list) {
+  tracks = list;
+  const valid = (t) => t === 'synth' || tracks.some((x) => x.url === t);
+  if (!prefs.track || !valid(prefs.track)) prefs.track = tracks[0]?.url ?? 'synth';
+}
+const usingFile = () => prefs.track && prefs.track !== 'synth';
+
+let audioEl = null;
+let fadeTimer = null;
+const FILE_VOLUME = 0.32;
+function fadeTo(target, ms, then) {
+  clearInterval(fadeTimer);
+  const from = audioEl.volume;
+  const t0 = performance.now();
+  fadeTimer = setInterval(() => {
+    const k = Math.min(1, (performance.now() - t0) / ms);
+    audioEl.volume = from + (target - from) * k;
+    if (k >= 1) {
+      clearInterval(fadeTimer);
+      then?.();
+    }
+  }, 50);
+}
+function startFile(url) {
+  if (!audioEl) {
+    audioEl = new Audio();
+    audioEl.loop = true;
+    audioEl.preload = 'auto';
+  }
+  if (audioEl.dataset.url !== url) {
+    audioEl.src = url;
+    audioEl.dataset.url = url;
+  }
+  if (!audioEl.paused && audioEl.volume > 0) return;
+  audioEl.volume = 0;
+  audioEl.play().then(() => fadeTo(FILE_VOLUME, 1500)).catch(() => { /* waits for a tap; unlockAudio retries */ });
+}
+function stopFile() {
+  if (!audioEl || audioEl.paused) return;
+  fadeTo(0, 500, () => audioEl.pause());
 }
 
 const ready = () => prefs.sfx && ctx && ctx.state === 'running';
@@ -217,6 +269,7 @@ function scheduleMusic() {
 }
 
 function startMusic() {
+  if (usingFile()) return startFile(prefs.track);
   if (!ensure() || musicTimer) return;
   musicBus.gain.cancelScheduledValues(ctx.currentTime);
   musicBus.gain.setTargetAtTime(0.55, ctx.currentTime, 1.5);
@@ -226,6 +279,7 @@ function startMusic() {
 }
 
 function stopMusic() {
+  stopFile();
   if (!ctx || !musicTimer) return;
   clearInterval(musicTimer);
   musicTimer = null;
@@ -238,4 +292,9 @@ document.addEventListener('pointerdown', unlockAudio, { passive: true });
 document.addEventListener('keydown', unlockAudio);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && prefs.music && musicTimer && ctx) nextChord = Math.max(nextChord, ctx.currentTime + 0.1);
+  // A song keeps playing in a background tab otherwise; pause it and pick up when you come back.
+  if (audioEl && usingFile() && prefs.music) {
+    if (document.hidden) audioEl.pause();
+    else startFile(prefs.track);
+  }
 });
